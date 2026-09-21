@@ -107,6 +107,19 @@ echo "$SAN" | grep -q "IP Address" && ok "证书 SAN 含 IP（手机按 IP 访�
 KEYMODE=$(stat -c '%a' "$STATE/tls/key.pem" 2>/dev/null)
 [ "$KEYMODE" = "600" ] && ok "私钥权限 600" || bad "私钥权限是 $KEYMODE（建议 600）"
 
+head_ "[3.5/5] 再点一次「开启 HTTPS」不能换证书（换了手机就得重新信任）"
+FP1=$(openssl x509 -in "$STATE/tls/cert.pem" -noout -fingerprint -sha256 2>/dev/null)
+curl -sk -o /dev/null --max-time 5 -X POST "https://127.0.0.1:$PORT/api/tls/enable"
+sleep 3
+FP2=$(openssl x509 -in "$STATE/tls/cert.pem" -noout -fingerprint -sha256 2>/dev/null)
+if [ -n "$FP1" ] && [ "$FP1" = "$FP2" ]; then
+  ok "证书被复用（指纹未变），手机不需要重新信任"
+else
+  bad "证书被重新签发了，手机上已装的信任会失效"
+fi
+CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 5 "https://127.0.0.1:$PORT/api/info")
+[ "$CODE" = "200" ] && ok "复用之后 HTTPS 仍然正常（200）" || bad "复用后 HTTPS 不通（$CODE）"
+
 head_ "[4/5] 切回 HTTP"
 curl -sk -o /dev/null --max-time 5 -X POST "https://127.0.0.1:$PORT/api/tls/disable"
 sleep 3

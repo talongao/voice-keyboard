@@ -353,8 +353,8 @@ fn route(
     // 生成自签证书并当场把协议换成 HTTPS（同一个端口、同一个令牌，不用重新配对）
     if *method == Method::Post && path == "/api/tls/enable" {
         let ips = net::local_ips();
-        return match crate::tls::generate(&crate::tls::base(), &ips) {
-            Ok(_) => {
+        return match crate::tls::generate_or_reuse(&crate::tls::base(), &ips) {
+            Ok((_, regenerated)) => {
                 crate::listener::request_tls(true);
                 let url = net::endpoints(app.port)
                     .first()
@@ -363,7 +363,12 @@ fn route(
                 app.note("tls", "已生成自签证书，切到 HTTPS".to_string());
                 json(200, serde_json::json!({
                     "ok": true, "switching": true, "url": url,
-                    "hint": "手机需要用 https 重新打开；首次要信任一次证书"
+                    "regenerated": regenerated,
+                    "hint": if regenerated {
+                        "证书是新签的，手机首次需要信任一次（之后不用再信任）"
+                    } else {
+                        "沿用了已有证书，手机不需要重新信任"
+                    }
                 }))
             }
             Err(e) => json(200, serde_json::json!({ "ok": false, "error": e })),
