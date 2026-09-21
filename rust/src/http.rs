@@ -16,6 +16,8 @@ use crate::state::{now_secs, App, LogEntry};
 // 前端直接复用 Python 版的两个页面，单一来源。
 const INDEX_HTML: &str = include_str!("../../index.html");
 const CONSOLE_HTML: &str = include_str!("../../console.html");
+/// 手机端采集用的 AudioWorklet（浏览器加载它时不会带我们的 token，所以放行）
+const MIC_WORKLET: &str = include_str!("../../mic-worklet.js");
 
 pub const APP_TAG: &str = "voice-keyboard";
 
@@ -87,18 +89,20 @@ fn handle(app: Arc<App>, mut req: tiny_http::Request) -> std::io::Result<()> {
         .and_then(|v| v.strip_prefix("Bearer ").map(|s| s.to_string()))
         .unwrap_or_default();
 
+    let mut raw: Vec<u8> = Vec::new();
     let mut body = String::new();
     if method == Method::Post {
         // as_reader() 给的是 &mut dyn Read，而 Read::take 需要 Self: Sized
         // （trait object 不是 Sized）。包一层 &mut 之后 Self 就是 &mut dyn Read 了。
         let mut reader = req.as_reader();
         let mut buf = Vec::new();
-        let _ = (&mut reader).take(1 << 20).read_to_end(&mut buf);
+        let _ = (&mut reader).take(4 << 20).read_to_end(&mut buf);
         body = String::from_utf8_lossy(&buf).into_owned();
+        raw = buf;
     }
     let data: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
 
-    let resp = route(&app, &method, &path, is_local, &token, &data);
+    let resp = route(&app, &method, &path, is_local, &token, &data, &raw);
     req.respond(resp)
 }
 
@@ -109,12 +113,20 @@ fn route(
     is_local: bool,
     token: &str,
     data: &serde_json::Value,
+    raw: &[u8],
 ) -> Reply {
     let is_get = *method == Method::Get;
 
     // ---------- 静态页面 ----------
     if is_get && (path == "/" || path == "/index.html") {
         return html(INDEX_HTML.to_string());
+    }
+    if is_get && path == "/mic-worklet.js" {
+        return reply(
+            200,
+            MIC_WORKLET.as_bytes().to_vec(),
+            "application/javascript; charset=utf-8",
+        );
     }
     if is_get && path == "/favicon.ico" {
         return reply(200, Vec::new(), "image/x-icon");
@@ -239,8 +251,40 @@ fn route(
     }
 
     // ---------- 麦克风模式 ----------
+    // 音频是裸 body（16-bit 单声道 PCM），单独处理，不走 JSON
+    if *method == Method::Post && path == "/api/mic/start" {
+        let dryrun = app.mode == "dryrun";
+        return match crate::audio::start(dryrun) {
+            Ok(msg) => json(200, serde_json::json!({ "ok": true, "message": msg })),
+            Err(e) => json(200, serde_json::json!({ "ok": false, "error": e })),
+        };
+    }
+    if *method == Method::Post && path == "/api/mic/audio" {
+        if raw.is_empty() {
+            return json(400, serde_json::json!({ "error": "空的音频块" }));
+        }
+        return match crate::audio::push(raw) {
+            Ok(()) => json(200, serde_json::json!({ "ok": true })),
+            Err(e) => json(200, serde_json::json!({ "ok": false, "error": e })),
+        };
+    }
+    if *method == Method::Post && path == "/api/mic/stop" {
+        return match crate::audio::stop() {
+            Ok(stat) => json(200, serde_json::json!({ "ok": true, "stat": stat })),
+            Err(e) => json(200, serde_json::json!({ "ok": false, "error": e })),
+        };
+    }
     // 需要 token：手机端切换 Tab 时调。
     if *method == Method::Get && path == "/api/mic/status" {
+        // dryrun 是"假装一切正常，只统计不输出"，音频同理：方便测试和排障
+        if app.mode == "dryrun" {
+            return json(200, serde_json::json!({
+                "ok": true, "platform": crate::mic::platform_name(),
+                "device": "dryrun 虚拟麦克风", "reason": "",
+                "tls": crate::listener::tls_on(),
+                "streaming": crate::audio::is_running(),
+            }));
+        }
         let p = crate::mic::probe();
         return json(200, serde_json::json!({
             "ok": p.ok,
@@ -248,6 +292,7 @@ fn route(
             "device": p.device,
             "reason": p.reason,
             "tls": crate::listener::tls_on(),
+            "streaming": crate::audio::is_running(),
         }));
     }
 
@@ -257,6 +302,9 @@ fn route(
 
     // 一键创建虚拟麦克风（只有 Linux 能自动）
     if *method == Method::Post && path == "/api/mic/setup" {
+        if app.mode == "dryrun" {
+            return json(200, serde_json::json!({ "ok": true, "message": "dryrun：假装创建好了" }));
+        }
         return match crate::mic::setup() {
             Ok(msg) => json(200, serde_json::json!({ "ok": true, "message": msg })),
             Err(e) => json(200, serde_json::json!({ "ok": false, "error": e })),
