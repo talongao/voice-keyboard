@@ -3,6 +3,7 @@
 [![build](https://github.com/talongao/voice-keyboard/actions/workflows/build.yml/badge.svg)](https://github.com/talongao/voice-keyboard/actions/workflows/build.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blueviolet.svg)](#平台支持)
+[![LINUX DO](https://img.shields.io/badge/LINUX%20DO-%E8%AE%A4%E5%8F%AF-blue.svg)](https://linux.do/)
 
 **把手机当成电脑的远程键盘**：手机上打出来 / 说出来的文字，直接插进电脑当前光标位置。
 
@@ -258,6 +259,11 @@ VK_PW=/path/to/node_modules/playwright ./tests/browser/run.sh
 - 每台设备一个令牌，服务重启后全部失效
 - 程序需要注入权限（Windows 无需额外授权、macOS 需辅助功能权限、Linux 依赖 X11）
 - 建议仅在可信局域网内使用，不要将服务端口暴露到公网
+
+## 致谢
+
+- 感谢 [**LINUX DO**](https://linux.do/) 社区的支持与认可。使用问题、功能建议与经验交流，
+  也欢迎在社区中提出。
 
 ## 许可证
 
