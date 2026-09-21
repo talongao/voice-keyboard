@@ -236,6 +236,12 @@ else
 fi
 
 STATUS_JSON="$(curl -s "$BASE/api/status")"
+# 控制台页的「检查更新」要用它和自己比版本，缺了就没法比
+if echo "$STATUS_JSON" | grep -q '"version"'; then
+  c_green "/api/status 带上了版本号（更新检测要用）"; PASS=$((PASS+1))
+else
+  c_red "/api/status 里没有 version 字段"; FAIL=$((FAIL+1))
+fi
 if echo "$STATUS_JSON" | grep -q '"mode"'; then
   c_green "/api/status 本机免 token 可访问"; PASS=$((PASS+1))
 else

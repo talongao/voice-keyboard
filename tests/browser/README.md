@@ -133,3 +133,13 @@ Rust 版概率低得多，但不是零。
   「收到的文本是不是期望文本的子序列」）。
 - **Windows / macOS 没这个问题**：那边走 `SendInput` + `KEYEVENTF_UNICODE` /
   `CGEventKeyboardSetUnicodeString`，字符直接交给系统，不改键盘映射。
+
+## 只测「检查更新」那一个功能
+
+```bash
+# 起一个实例
+./rust/target/release/voice-keyboard --headless --no-tray --no-browser --port 8803 --no-auth &
+
+# 打桩测三种情况：有新版本 / 已是最新 / 断网（不依赖真实网络）
+VK_PW=/path/to/node_modules/playwright node tests/browser/update_check.js
+```

@@ -58,6 +58,9 @@
   dt{color:var(--muted)}
   dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
   dd.eps{text-align:right;font-size:12.5px;color:#8ab4f8;word-break:break-all}
+  .upd{margin:10px 0 0;font-size:12.5px;color:var(--muted);min-height:1em;text-align:right}
+  .upd a{color:#8ab4f8}
+  .upd.new{color:#7ee2a8}
 
   .sw{display:flex;align-items:center;gap:10px;margin:18px 0 4px;
       padding-top:16px;border-top:1px solid var(--border);cursor:pointer;user-select:none;font-size:14px}
@@ -98,11 +101,14 @@
         <dt>注入模式</dt><dd id="mode">—</dd>
         <dt>已配对设备</dt><dd id="clients">—</dd>
         <dt>访问地址</dt><dd class="eps" id="eps">—</dd>
+        <dt>版本</dt><dd id="ver">—</dd>
       </dl>
+      <p class="upd" id="upd"></p>
 
       <label class="sw"><input type="checkbox" id="enter"> 发送后自动回车（手机端发完自动敲回车）</label>
       <div class="row-btns">
         <button id="copy">复制配对链接</button>
+        <button id="chk">检查更新</button>
         <button id="stop" class="danger">停止服务</button>
       </div>
     </section>
@@ -131,6 +137,7 @@
       $("#pin").textContent = j.pin || "已关闭";
       $("#clients").textContent = j.clients + " 台";
       $("#eps").innerHTML = (j.endpoints || []).map(esc).join("<br>") || "—";
+      $("#ver").textContent = j.version ? "v" + j.version : "—";
       $("#enter").checked = !!j.allow_enter;
     } catch (e) {
       $("#state").className = "pill off";
@@ -150,6 +157,55 @@
   });
 
   // 复制配对链接 / 停止服务——都在本机页面上，直接打本机接口
+  // ── 检查更新 ────────────────────────────────────────────────
+  // 刻意让浏览器去问 GitHub API（api.github.com 允许跨域），而不是程序自己发请求：
+  // 二进制不长胖，程序也仍然"不发起任何出站连接"。只有点按钮才会查一次。
+  const REPO = "talongao/voice-keyboard";
+  const REL_URL = "https://github.com/" + REPO + "/releases/latest";
+
+  function cmpVer(a, b) {
+    const A = String(a).replace(/^v/, "").split(".").map(Number);
+    const B = String(b).replace(/^v/, "").split(".").map(Number);
+    for (let i = 0; i < Math.max(A.length, B.length); i++) {
+      const x = A[i] || 0, y = B[i] || 0;
+      if (x !== y) return x - y;
+    }
+    return 0;
+  }
+
+  async function checkUpdate() {
+    const out = $("#upd");
+    const cur = ($("#ver").textContent || "").replace(/^v/, "");
+    out.className = "upd";
+    out.textContent = "正在检查…";
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 8000);
+    try {
+      const r = await fetch("https://api.github.com/repos/" + REPO + "/releases/latest", {
+        headers: { Accept: "application/vnd.github+json" },
+        signal: ctl.signal,
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const j = await r.json();
+      const latest = String(j.tag_name || "").replace(/^v/, "");
+      if (!latest) throw new Error("没有版本号");
+      if (cmpVer(latest, cur) > 0) {
+        out.className = "upd new";
+        out.innerHTML =
+          "有新版本 v" + esc(latest) + ' · <a href="' + REL_URL +
+          '" target="_blank" rel="noopener">去下载</a>';
+      } else {
+        out.textContent = "已是最新（v" + esc(cur) + "）";
+      }
+    } catch (e) {
+      out.textContent = "检查失败（可能没联网，或 GitHub 访问不了）";
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  $("#chk").addEventListener("click", checkUpdate);
+
   $("#copy").addEventListener("click", async () => {
     const url = "{{PAIR_URL}}";
     try {
