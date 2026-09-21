@@ -65,6 +65,10 @@ impl Tray {
                 return None;
             }
         };
+        // Windows 上默认"左键也弹菜单"，于是单击一下既开页面又弹菜单，很吵。
+        // 关掉它：左键双击开控制台、右键弹菜单 —— 这也是大家习惯的托盘行为。
+        #[cfg(windows)]
+        tray.set_show_menu_on_left_click(false);
 
         // 这个线程收到事件就直接把活干完——不排队、不等谁轮询。
         // （历史教训：之前把动作塞队列、指望 update() 来取，结果窗口收进托盘后
@@ -86,14 +90,16 @@ impl Tray {
                 }
             }
             while let Ok(ev) = TrayIconEvent::receiver().try_recv() {
-                if let TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
-                    ..
-                } = ev
-                {
-                    crate::log::line("托盘事件：左键点图标");
-                    app2.request_show();
+                match ev {
+                    // 左键**双击**才开控制台（单击不动，避免误触）
+                    TrayIconEvent::DoubleClick {
+                        button: MouseButton::Left,
+                        ..
+                    } => {
+                        crate::log::line("托盘事件：左键双击");
+                        app2.request_show();
+                    }
+                    _ => {}
                 }
             }
         });

@@ -7,7 +7,6 @@
 
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-mod audio;
 mod http;
 mod inject;
 mod log;
@@ -15,9 +14,6 @@ mod net;
 mod state;
 mod status;
 mod tray;
-mod listener;
-mod mic;
-mod tls;
 mod vkclient;
 
 use std::process::ExitCode;
@@ -51,8 +47,6 @@ struct Args {
     stop_only: bool,
     /// 打开当前实例的控制台页面。
     console_only: bool,
-    /// 强制 HTTP（忽略已有证书）
-    force_http: bool,
 }
 
 const USAGE: &str = "\
@@ -72,7 +66,6 @@ const USAGE: &str = "\
   --stop           停掉正在跑的实例（窗口收进托盘后找不到出口时用）
   --no-auth        关闭 PIN 校验（仅限完全可信的网络）
   --no-enter       禁用「发送后回车」功能
-  --http           强制用 HTTP（即使已经生成过证书，麦克风模式会不可用）
   --quiet          不打印横幅（后台模式内部用）
   -h, --help       显示本帮助
 \n端口说明：默认 8765；被别的程序占了就依次试 8766、8767…（最多 10 个），
@@ -94,7 +87,6 @@ fn parse_args() -> Result<Args, String> {
         status_only: false,
         stop_only: false,
         console_only: false,
-        force_http: false,
     };
     let mut no_auth = false;
     let mut it = std::env::args().skip(1);
@@ -124,7 +116,6 @@ fn parse_args() -> Result<Args, String> {
             "--status" => a.status_only = true,
             "--stop" => a.stop_only = true,
             "--console" => a.console_only = true,
-            "--http" => a.force_http = true,
             "-h" | "--help" => {
                 print!("{USAGE}");
                 std::process::exit(0);
@@ -411,28 +402,7 @@ fn main() -> ExitCode {
         log::line(note.clone());
     }
 
-    // 证书放哪：和 status.json / 日志同一处，方便用户找到和删除
-    let cert_base = crate::status::dir();
-    crate::tls::set_base(cert_base.clone());
-    let bind_addr = format!("{}:{}", args.host, port);
-
-    // 没证书 → HTTP；有证书 → HTTPS（除非 --http 强制回 HTTP）。
-    // 换协议由 listener 负责，这里只决定"起步用哪个"。
-    let use_tls = listener::should_use_tls(&cert_base, args.force_http);
-    let (server, initial) = if use_tls {
-        // 要 HTTPS：占端口那步用的 HTTP 监听器得先放掉，交给 listener 按协议重绑
-        drop(server);
-        (None, None)
-    } else {
-        (Some(port), Some(server))
-    };
-    let _ = server;
-    log::line(format!(
-        "{} 已监听 {}:{}",
-        if use_tls { "HTTPS" } else { "HTTP" },
-        args.host,
-        port
-    ));
+    log::line(format!("HTTP 已监听 {}:{}", args.host, port));
 
     let app = Arc::new(App::new(
         port,
@@ -521,22 +491,14 @@ fn main() -> ExitCode {
     }
 
     let headless = args.headless || !has_display();
-    let mut initial = initial;
+    let mut server_slot = Some(server);
     if headless {
         if !args.headless && !args.quiet {
-            crate::say!("  （没有检测到图形界面，改用 headless 模式）");
+            crate::say!("  （没有检测到图形环境，改用 headless 模式）");
         }
         log::line("headless 模式（Ctrl+C 停止）");
         let app2 = app.clone();
-        let run = listener::run(
-            app2,
-            initial.take(),
-            bind_addr.clone(),
-            cert_base.clone(),
-            args.force_http,
-            |on| log::line(if on { "已切到 HTTPS" } else { "已切回 HTTP" }),
-        );
-        if let Err(e) = run {
+        if let Err(e) = http::serve_on(app2, server_slot.take().expect("主口监听器")) {
             log::line(format!("服务异常退出：{e}"));
             log::error_box("语音键盘 · 服务异常退出", &format!("{e}\n\n日志：{}", log_path.display()));
             return ExitCode::from(1);
@@ -551,17 +513,8 @@ fn main() -> ExitCode {
     // 事件循环不醒来导致托盘点了没反应、关窗口把服务一起带走……）。
     // 改成"托盘 + 浏览器页"之后，这些问题整个不存在。
     let app_srv = app.clone();
-    let force_http_srv = args.force_http;
     std::thread::spawn(move || {
-        let run = listener::run(
-            app_srv,
-            initial,
-            bind_addr,
-            cert_base,
-            force_http_srv,
-            |on| log::line(if on { "已切到 HTTPS" } else { "已切回 HTTP" }),
-        );
-        if let Err(e) = run {
+        if let Err(e) = http::serve_on(app_srv, server_slot.take().expect("主口监听器")) {
             log::line(format!("服务异常退出：{e}"));
         }
     });
@@ -706,11 +659,26 @@ fn open_console(endpoints: &[String], port: u16) {
     }
 }
 
+/// Windows 上给子进程加"不要窗口"标志。
+/// 不加的话 `cmd /C start` 会闪出一个终端黑框，用户看着莫名其妙。
+#[allow(unused_variables)]
+pub(crate) fn no_window(cmd: &mut std::process::Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
 fn open_url(url: &str) -> bool {
     #[cfg(windows)]
-    let r = std::process::Command::new("cmd")
-        .args(["/C", "start", "", url])
-        .spawn();
+    let r = {
+        let mut c = std::process::Command::new("cmd");
+        c.args(["/C", "start", "", url]);
+        no_window(&mut c);
+        c.spawn()
+    };
     #[cfg(target_os = "macos")]
     let r = std::process::Command::new("open").arg(url).spawn();
     #[cfg(all(unix, not(target_os = "macos")))]

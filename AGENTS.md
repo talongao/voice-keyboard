@@ -118,28 +118,17 @@ VK_PW=/path/to/node_modules/playwright ./tests/browser/run.sh   # 手机端：�
 # （VK_PW 不设也行，脚本会在 ./node_modules、~/node_modules、全局 npm root 里找）
 ```
 
-## 麦克风模式（第二条线）
+## 试过但放弃的：麦克风模式（v0.1.16 有，v0.1.17 移除）
 
-文字线（现状）和音频线**并存**：手机端一个 Tab 切。
+做过一版"手机当电脑麦克风"（音频直传）。完整实现与踩坑记录都在 git 历史里
+（tag `v0.1.16`、PR #7），这里只记**为什么砍掉**，免得将来再走一遍：
 
-- **协议策略**：没证书 → 全部 HTTP（现状不变）；**一旦生成过自签证书 → 全部走 HTTPS**。
-  证书存在 `status.json` 那个目录下的 `tls/`；`--http` 可强制回 HTTP。
-- **为什么非要 HTTPS**：浏览器只在安全上下文（https / localhost）下给麦克风。
-  `http://192.168.x.x` 属于不安全，`getUserMedia` 直接被拒 —— 这是浏览器规矩，绕不过。
-- **为什么要自签而不是真证书**：局域网 IP 没有域名，CA 不可能签发。
-  自签的 SAN 必须写进本机所有 IP（见 `net::local_ips`），否则手机按 IP 访问会报名字不匹配。
-- **切换是进程内的**：`listener::run` 用 `Arc<Server>` + `unblock()` 原地换协议，
-  **不重启进程、不换端口、不掉令牌**（重启会让手机重新配对，体验很差）。
-- **音频怎么传**：手机 Web Audio 采集 → 每 100ms 一块 16-bit 单声道 PCM(48k) → `POST /api/mic/audio`（裸 body）。
-  刻意**不用 WebSocket**：省一个依赖（tiny_http 够用），而且 iOS Safari 不支持流式请求体、
-  "反复 POST 小块"它反而没问题。裸 PCM 在局域网约 768 kbps，不需要 Opus/ffmpeg。
-- **输出后端**：Linux 用 `pacat` 管子（零依赖）；Windows/macOS 才引入 `cpal`
-  （做成 `[target.'cfg(any(windows, target_os = "macos"))'.dependencies]`，Linux 构建不受影响）。
-  cpal 的 Stream 在部分平台不是 Send，必须在它自己的线程里建、也在那里 drop。
-- **`--mode dryrun` 也管音频**：探测直接报"可用"、音频只统计字节数不输出，
-  这样没有声卡的环境（CI）也能端到端测采集与传输。
-- **虚拟声卡**：Linux 用 PipeWire/Pulse 的 null-sink（程序自己建，零安装）；
-  Windows 要 VB-CABLE 一类；macOS 要 BlackHole 且装完重启。探测与引导在 `mic.rs`。
+- **手机必须信任自签证书**：浏览器只在安全上下文（https / localhost）下给麦克风，
+  而局域网 IP 没有域名、CA 不可能签发 → 只能自签，iOS 还要装描述文件 + 手动开信任开关。
+- **电脑要装虚拟声卡，还可能改掉默认设备**：Windows 装 VB-CABLE 后系统常把默认输出
+  切到它（用户扬声器就没声音）；macOS 装 BlackHole 还要重启；只有 Linux 零安装。
+- **网页必须保持前台**：移动端浏览器息屏或切后台就暂停录音（原生 App 才能后台跑）。
+- 而收益只是"不用手机输入法的语音输入" —— 成本明显高于收益，砍掉，回到"借输入法"这条线。
 
 ## 踩过的坑（别再踩）
 
@@ -154,9 +143,5 @@ VK_PW=/path/to/node_modules/playwright ./tests/browser/run.sh   # 手机端：�
    不授权的话图标**不出现且不报错**（注入也会被静默挡掉）。
 4. **macOS 托盘只能在 `.app` 包里**：裸二进制从终端跑碰 AppKit 会 abort
    （`CGSConnectionByID` 断言，拦不住）。程序自己判断：不在 `.app` 里就跳过托盘。
-5. **`index.html` / `console.html` 是编译期内联的**（`include_str!`）：改完 HTML **必须重新
-   `cargo build`**，否则测的是二进制里那份旧页面（踩过：改了页面没重编，测试一直对着旧版跑）。
-6. **页面里原来只有 `.gate.hide` / `.stick-row.hide` 这种"元素级"隐藏**：新加的面板/弹窗
-   只写 `class="hide"` 是不生效的，得有一条通用的 `.hide{display:none !important}`。
-7. **Windows 的托盘/菜单靠主线程消息循环派发**：主线程去 `sleep` 轮询的话，
+5. **Windows 的托盘/菜单靠主线程消息循环派发**：主线程去 `sleep` 轮询的话，
    连右键菜单都弹不出来（托盘"点了没反应"的根因）。
