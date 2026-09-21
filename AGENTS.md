@@ -1,6 +1,19 @@
 # 语音键盘 —— 仓库规则（给 agent 和人都看）
 
-改代码前先读完。这个仓库的协作方式**只用 GitHub**（以前挂过 Gitee，已经弃用）。
+改代码前先读完。
+
+> ⚠️ **这个仓库是公开的。** 本地环境信息、私有基础设施一律不许进来：
+> 本机代理地址与端口、私有对象存储 / 分发通道的地址与凭据、真实内网 IP 与主机名、
+> 配对 token 与密钥、个人访问令牌的 scope 清单、本机绝对路径（`/tmp/...`、`~/...`）。
+> 文档和截图需要举例时，用演示值（如 `192.168.1.100`、`DEMO-...`）。
+> 提交前自查：`grep -rniE 'talon|oss|licell|proxy|192\\.168\\.0|/tmp/' --include='*' -I .`
+> 历史里进过敏感内容的，光删文件不够——要重写历史（见「发版与仓库维护」）。这个仓库的协作方式**只用 GitHub**（以前挂过 Gitee，已经弃用）。
+
+## 仓库沿革
+
+仓库在 2026-09 因**历史中出现过本机环境信息**而整体重建过一次：旧的提交、PR、Release
+全部删除，改为从 `v0.1.15` 重新开始（历史只保留初始的三条提交）。所以你会看到
+git 历史很短——这是有意为之，不是丢数据。
 
 ## 仓库与分支
 
@@ -23,6 +36,8 @@ git config core.hooksPath .githooks     # 新克隆的机器先跑这一句
 
 - **`.githooks/pre-commit`**：在 `master`/`main` 上提交 → 直接拒绝
 - **`.githooks/pre-push`**：推送 `master` → 直接拒绝（提示走 PR）
+  - 唯一的例外是**新仓库引导**：远端还没有 master 时没有任何 PR 可走，
+    此时用 `git push --no-verify origin master` 推一次（仅此一次，之后一律走 PR）
 
 > 这是本地防线；GitHub 那侧还有 ruleset（无 bypass、要 PR、要四个检查绿），
 > 所以就算绕过钩子直推，远端也会拒（实测过：`push declined due to repository rule violations`）。
@@ -78,7 +93,7 @@ git push origin v0.1.15
 ## GitHub 侧配置（当前状态，别乱动）
 
 - 仓库 `talongao/voice-keyboard`（public），默认分支 `master`
-- ruleset `master`（id 23746117）：**enforcement = Active**，**bypass list = 空**
+- ruleset `master`（id 23749654）：**enforcement = Active**，**bypass list = 空**
 - 规则：`deletion` / `non_fast_forward` / `required_linear_history` /
   `pull_request`（0 approval，只允许 rebase/squash 合并）/
   `required_status_checks`（必需：`windows` `macos` `linux` `test`）
