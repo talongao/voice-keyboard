@@ -580,7 +580,7 @@ fn main() -> ExitCode {
     std::thread::spawn(move || loop {
         app_show.wait_for_show();
         log::line("有人要控制台，打开页面");
-        open_console(&eps, port);
+        open_console_with(&eps, port, app_show.take_guide_request());
         let _ = quiet;
     });
 
@@ -613,7 +613,7 @@ fn main() -> ExitCode {
         loop {
             app.wait_for_show();
             log::line("有人要控制台，打开页面");
-            open_console(&endpoints, args.port);
+            open_console_with(&endpoints, args.port, app.take_guide_request());
         }
     }
     #[cfg(all(not(windows), not(target_os = "macos")))]
@@ -622,7 +622,7 @@ fn main() -> ExitCode {
         loop {
             app.wait_for_show();
             log::line("有人要控制台，打开页面");
-            open_console(&endpoints, args.port);
+            open_console_with(&endpoints, args.port, app.take_guide_request());
         }
     }
 }
@@ -695,7 +695,16 @@ fn win32_message_loop() {
 /// 控制台页（`/console`）只允许本机访问，所以它就是"PC 端的界面"：
 /// 二维码、地址、PIN、开关都在上面。
 fn open_console(endpoints: &[String], port: u16) {
-    let url = format!("http://127.0.0.1:{port}/console");
+    open_console_with(endpoints, port, false)
+}
+
+/// `guide=true` 时带上 `?mic=1`：控制台页会直接展开麦克风引导
+fn open_console_with(endpoints: &[String], port: u16, guide: bool) {
+    let proto = if crate::listener::tls_on() { "https" } else { "http" };
+    let mut url = format!("{proto}://127.0.0.1:{port}/console");
+    if guide {
+        url.push_str("?mic=1");
+    }
     log::line(format!("打开控制台：{url}"));
     if !open_url(&url) {
         log::line("打不开浏览器，手动访问上面的地址也一样");

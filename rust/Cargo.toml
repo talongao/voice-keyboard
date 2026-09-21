@@ -1,6 +1,6 @@
 [package]
 name = "voice-keyboard"
-version = "0.1.16"
+version = "0.1.17"
 edition = "2021"
 description = "手机当远程键盘：文字直接插进电脑光标"
 license = "MIT"

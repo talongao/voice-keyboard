@@ -25,7 +25,7 @@ const bad = (m, extra) => {
     executablePath: CHROME,
     args: ["--no-sandbox", ...(process.env.VK_PROXY ? [`--proxy-server=${process.env.VK_PROXY}`] : [])],
   });
-  const page = await browser.newPage();
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } }); // 控制台是 PC 页面，用桌面视口
   const errs = [];
   page.on("pageerror", (e) => errs.push(String(e)));
 

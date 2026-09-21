@@ -114,7 +114,12 @@ git push origin v0.1.15
 ```bash
 cargo build --release --manifest-path rust/Cargo.toml
 ./tests/e2e_xvfb.sh                    # 接口层：HTTP → 鉴权 → 注入 → 应用真收到字
-VK_PW=/path/to/node_modules/playwright ./tests/browser/run.sh   # 手机端：真浏览器点页面
+./tests/mic_tls.sh                     # 麦克风：探测/引导/自签证书/HTTP↔HTTPS 原地切换
+./tests/audio_e2e.sh                   # 真音频：建虚拟麦克风 → 灌 440Hz → 从 monitor 录回来验频率
+                                       # （需要 PulseAudio/PipeWire，没有会自己跳过；CI 上跳过）
+VK_PW=/path/to/node_modules/playwright ./tests/browser/run.sh   # 手机端：真浏览器点页面（手机视口）
+VK_PW=... VK_PORT=8805 node tests/browser/mic_mode.js            # 麦克风模式：手机视口跑手机，
+                                       # 电脑端控制台页必须用**桌面视口**另开一页测
 # （VK_PW 不设也行，脚本会在 ./node_modules、~/node_modules、全局 npm root 里找）
 ```
 

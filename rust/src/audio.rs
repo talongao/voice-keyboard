@@ -57,9 +57,9 @@ pub fn stats() -> (u64, u64) {
 
 /// 开麦。dryrun 下不做任何输出，只统计。
 pub fn start(dryrun: bool) -> Result<String, String> {
-    let mut g = session().lock().map_err(|_| "会话锁坏了".to_string())?;
+    let mut g = session().lock().map_err(|_| "音频会话状态异常".to_string())?;
     if g.is_some() {
-        return Ok("麦克风已经在用了".into());
+        return Ok("音频会话已在进行中".into());
     }
     CHUNKS.store(0, Ordering::Relaxed);
     BYTES.store(0, Ordering::Relaxed);
@@ -84,22 +84,22 @@ pub fn start(dryrun: bool) -> Result<String, String> {
             break;
         }
         if autostop_if_idle(5) {
-            crate::log::line("麦克风 5 秒没数据，已自动关闭");
+            crate::log::line("音频 5 秒无数据，已自动停止");
             break;
         }
     });
 
     Ok(if dryrun {
-        "已开始（dryrun：只统计不输出）".into()
+        "已开始（dryrun：仅统计，不输出音频）".into()
     } else {
-        "麦克风已打开".into()
+        "音频输出已开启".into()
     })
 }
 
 /// 收一块 PCM
 pub fn push(pcm: &[u8]) -> Result<(), String> {
-    let mut g = session().lock().map_err(|_| "会话锁坏了".to_string())?;
-    let s = g.as_mut().ok_or_else(|| "还没开麦（先调 /api/mic/start）".to_string())?;
+    let mut g = session().lock().map_err(|_| "音频会话状态异常".to_string())?;
+    let s = g.as_mut().ok_or_else(|| "尚未开启音频会话（请先调用 /api/mic/start）".to_string())?;
     s.chunks += 1;
     s.bytes += pcm.len() as u64;
     s.last_at = std::time::Instant::now();
@@ -111,7 +111,7 @@ pub fn push(pcm: &[u8]) -> Result<(), String> {
         #[cfg(all(unix, not(target_os = "macos")))]
         Backend::Pacat(child) => {
             use std::io::Write;
-            let stdin = child.stdin.as_mut().ok_or_else(|| "pacat 的 stdin 没了".to_string())?;
+            let stdin = child.stdin.as_mut().ok_or_else(|| "pacat 的输入管道不可用".to_string())?;
             stdin.write_all(pcm).map_err(|e| format!("写 pacat 失败：{e}"))
         }
         #[cfg(any(windows, target_os = "macos"))]
@@ -124,10 +124,19 @@ pub fn push(pcm: &[u8]) -> Result<(), String> {
 
 /// 关麦。返回这轮的统计（手机端可以显示"传了多少"）
 pub fn stop() -> Result<serde_json::Value, String> {
-    let mut g = session().lock().map_err(|_| "会话锁坏了".to_string())?;
-    let s = g.take().ok_or_else(|| "本来就没开麦".to_string())?;
+    let mut g = session().lock().map_err(|_| "音频会话状态异常".to_string())?;
+    let s = g.take().ok_or_else(|| "当前没有进行中的音频会话".to_string())?;
     let secs = s.started.elapsed().as_secs_f64();
-    drop(s.backend); // Linux 上这里会关掉 pacat（子进程随之退出，不会留僵尸）
+    let mut backend = s.backend;
+    // Linux 上要把 pacat 收干净：先关管道再 kill + wait，
+    // 否则会留下僵尸子进程（这个坑我们在 open_url 上踩过一次）
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if let Backend::Pacat(child) = &mut backend {
+        drop(child.stdin.take());
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    drop(backend);
     Ok(serde_json::json!({
         "seconds": (secs * 10.0).round() / 10.0,
         "chunks": s.chunks,
@@ -146,7 +155,13 @@ pub fn autostop_if_idle(secs: u64) -> bool {
         None => return false,
     };
     if idle {
-        if let Some(s) = g.take() {
+        if let Some(mut s) = g.take() {
+            #[cfg(all(unix, not(target_os = "macos")))]
+            if let Backend::Pacat(child) = &mut s.backend {
+                drop(child.stdin.take());
+                let _ = child.kill();
+                let _ = child.wait();
+            }
             drop(s.backend);
         }
         true
@@ -158,15 +173,15 @@ pub fn autostop_if_idle(secs: u64) -> bool {
 // ── Linux：pacat 管子 ─────────────────────────────────────────
 #[cfg(all(unix, not(target_os = "macos")))]
 fn open_backend() -> Result<Backend, String> {
-    // 设备不存在就先建（Linux 上零安装，程序自己搞定）
-    let probe = crate::mic::probe();
-    if !probe.ok {
-        return Err(format!(
-            "{} 先按引导把虚拟麦克风准备好（点「一键创建」）",
-            probe.reason
-        ));
+    // 设备不存在就先建：Linux 上"零安装"的承诺就落在这里
+    if !sink_exists() {
+        crate::mic::setup()?;
+        if !sink_exists() {
+            return Err("虚拟麦克风没建起来，请点「一键创建」后重试".into());
+        }
     }
-    let child = std::process::Command::new("pacat")
+
+    let mut child = std::process::Command::new("pacat")
         .args([
             "--playback",
             "--device=voice-keyboard-mic",
@@ -177,10 +192,37 @@ fn open_backend() -> Result<Backend, String> {
         ])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| format!("启动 pacat 失败：{e}"))?;
+
+    // pacat 起不来时是"立刻退出"，不会告诉你——所以等一小会儿确认它活着。
+    // 不确认的话就会变成"报成功、一写就卡"（踩过：写死的 pipe 把请求线程堵住）。
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    if let Ok(Some(st)) = child.try_wait() {
+        let mut msg = String::new();
+        if let Some(mut e) = child.stderr.take() {
+            use std::io::Read;
+            let _ = e.read_to_string(&mut msg);
+        }
+        let msg = msg.trim();
+        return Err(if msg.is_empty() {
+            format!("pacat 启动后立刻退出（状态 {st}）")
+        } else {
+            format!("pacat 起不来：{msg}")
+        });
+    }
     Ok(Backend::Pacat(child))
+}
+
+/// 目标 sink 在不在（pactl 列一下）
+#[cfg(all(unix, not(target_os = "macos")))]
+fn sink_exists() -> bool {
+    std::process::Command::new("pactl")
+        .args(["list", "short", "sinks"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("voice-keyboard-mic"))
+        .unwrap_or(false)
 }
 
 // ── Windows / macOS：cpal 输出到虚拟声卡 ─────────────────────
@@ -231,7 +273,7 @@ fn open_backend() -> Result<Backend, String> {
     let host = cpal::default_host();
     let device = host
         .output_devices()
-        .map_err(|e| format!("列不出输出设备：{e}"))?
+        .map_err(|e| format!("无法枚举输出设备：{e}"))?
         .find(|d| {
             d.name()
                 .map(|n| n.to_lowercase().contains(&want.to_lowercase()))
@@ -287,7 +329,7 @@ fn open_backend() -> Result<Backend, String> {
                 }
             }
             Err(e) => {
-                let _ = tx.send(Err(format!("打不开输出流：{e}")));
+                let _ = tx.send(Err(format!("无法打开输出流：{e}")));
             }
         }
     });

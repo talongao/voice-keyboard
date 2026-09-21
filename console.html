@@ -71,6 +71,35 @@
   .sw input:checked{background:var(--accent)}
   .sw input:checked::after{left:19px;background:#fff}
 
+  .mic{margin:0 0 4px}
+  .mic-row{display:flex;align-items:flex-start;gap:8px;font-size:13.5px;line-height:1.6}
+  .mic-dot{flex:0 0 auto;width:8px;height:8px;border-radius:50%;background:#8b94a7;margin-top:6px}
+  .mic-dot.ok{background:#22c55e}
+  .mic-dot.bad{background:#ef4444}
+  .mic-btns{display:flex;gap:8px;margin-top:12px}
+  .mic-btns button{
+    flex:1 1 0;height:34px;border-radius:9px;cursor:pointer;font:inherit;font-size:13px;
+    background:var(--surface2);color:var(--text);border:1px solid var(--border);
+  }
+  .mic-btns button:hover{border-color:#31405c}
+  .mic-qr{margin-top:14px;text-align:center}
+  .mic-qr p{margin:0 0 10px;font-size:12.5px;color:var(--muted)}
+  .mic-qr img{width:180px;height:180px;background:#fff;border-radius:10px;padding:8px}
+  .mic-steps{margin-top:14px;display:flex;flex-direction:column;gap:10px}
+  .mstep{background:#161b23;border:1px solid #2a3140;border-radius:12px;padding:12px}
+  .mstep .st{font-size:13px;font-weight:600;margin-bottom:5px}
+  .mstep .sd{font-size:12.5px;color:var(--muted);line-height:1.6}
+  .mstep code{display:block;margin-top:7px;background:#0f1319;border:1px solid #2a3140;border-radius:7px;
+    padding:7px 9px;font-size:12px;color:#8ab4f8;word-break:break-all}
+  .mstep .sact{margin-top:9px;display:flex;gap:8px}
+  .mstep .sact button,.mstep .sact a{
+    flex:1 1 0;height:34px;border-radius:9px;font:inherit;font-size:13px;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;text-decoration:none;
+    background:var(--accent);color:#fff;border:0;
+  }
+  .mstep.done{opacity:.55}
+  .hide{display:none !important}
+
   h3{font-size:13px;color:var(--muted);font-weight:600;margin:20px 0 10px;
      text-transform:uppercase;letter-spacing:.6px}
   ul{list-style:none;margin:0;padding:0;font-size:13.5px;max-height:230px;overflow-y:auto}
@@ -106,6 +135,23 @@
       <p class="upd" id="upd"></p>
 
       <label class="sw"><input type="checkbox" id="enter"> 发送后自动回车（手机端发完自动敲回车）</label>
+      <h3>麦克风模式</h3>
+      <div class="mic">
+        <div class="mic-row">
+          <span class="mic-dot" id="mic-dot"></span>
+          <span id="mic-why">检测中…</span>
+        </div>
+        <div class="mic-btns">
+          <button id="mic-recheck">重新检测</button>
+          <button id="mic-open">查看引导</button>
+        </div>
+        <div class="mic-qr hide" id="mic-qr">
+          <p>手机请改用下面的地址扫描（HTTPS）：</p>
+          <img id="mic-qr-img" alt="HTTPS 配对二维码">
+        </div>
+        <div class="mic-steps hide" id="mic-steps"></div>
+      </div>
+
       <div class="row-btns">
         <button id="copy">复制配对链接</button>
         <button id="chk">检查更新</button>
@@ -143,6 +189,140 @@
       $("#state").className = "pill off";
       $("#state").textContent = "已停止";
     }
+  }
+
+
+  // ── 麦克风模式（引导在电脑端，因为装驱动是电脑上的活）────────────
+  const micDot = $("#mic-dot"), micWhy = $("#mic-why");
+  const micSteps = $("#mic-steps"), micQr = $("#mic-qr"), micQrImg = $("#mic-qr-img");
+
+  function micSay(ok, text) {
+    micDot.className = "mic-dot " + (ok === true ? "ok" : ok === false ? "bad" : "");
+    micWhy.textContent = text;
+  }
+
+  async function micRefresh() {
+    let st = null;
+    try { st = await (await fetch("/api/mic/status")).json(); } catch (e) {}
+    if (!st) { micSay(false, "取不到状态（服务可能已停止）"); return; }
+
+    if (st.ok && st.tls) {
+      micSay(true, "已就绪 —— 设备：" + (st.device || "虚拟麦克风")
+        + "。手机端切到「麦克风」标签即可开始。");
+      micQr.classList.add("hide");
+      micSteps.classList.add("hide");
+      return;
+    }
+    if (st.ok && !st.tls) {
+      micSay(null, "虚拟设备已就绪，但还没有 HTTPS 证书 —— 浏览器只在 https 下才允许网页使用麦克风。"
+        + "点「查看引导」按第 1 步生成证书。");
+      micSteps.classList.add("hide");
+      return;
+    }
+    micSay(false, st.reason || "还未就绪");
+  }
+
+  async function micOpenGuide() {
+    micSteps.classList.remove("hide");
+    micSteps.innerHTML = '<div class="mstep"><div class="st">正在获取引导…</div></div>';
+    let g = null;
+    try { g = await (await fetch("/api/mic/guide")).json(); } catch (e) {}
+    if (!g || !g.steps) {
+      micSteps.innerHTML = '<div class="mstep"><div class="st">无法获取引导</div>'
+        + '<div class="sd">请刷新页面后重试。</div></div>';
+      return;
+    }
+    micSteps.innerHTML = "";
+    g.steps.forEach((st, i) => micStep(st, i + 1));
+    await micRefresh();
+  }
+
+  function micStep(st, n) {
+    const d = document.createElement("div");
+    d.className = "mstep";
+    const t = document.createElement("div");
+    t.className = "st";
+    t.textContent = n + ". " + (st.title || "");
+    const sd = document.createElement("div");
+    sd.className = "sd";
+    sd.textContent = st.detail || "";
+    d.append(t, sd);
+
+    if (st.command) {
+      const c = document.createElement("code");
+      c.textContent = st.command;
+      d.appendChild(c);
+    }
+    const act = document.createElement("div");
+    act.className = "sact";
+
+    if (st.url) {
+      const a = document.createElement("a");
+      a.href = st.url;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.textContent = "打开下载页面";
+      act.appendChild(a);
+    }
+
+    if (st.action === "enable_tls") {
+      const b = document.createElement("button");
+      b.textContent = "生成证书并切换到 HTTPS";
+      b.addEventListener("click", async () => {
+        b.disabled = true;
+        b.textContent = "正在生成…";
+        let r = null;
+        try { r = await (await fetch("/api/tls/enable", { method: "POST" })).json(); } catch (e) {}
+        if (r && r.ok) {
+          d.classList.add("done");
+          b.textContent = "已切换 ✓";
+          // 换成 https 之后手机要重新配对（协议变了，localStorage 不同源），
+          // 所以直接把新的配对二维码显示出来，手机扫一下就行
+          micQrImg.src = "/api/qr.svg?t=" + Date.now();
+          micQr.classList.remove("hide");
+          micSay(true, "证书已生成，服务已切换到 HTTPS，页面地址也变成了 https://。"
+            + "手机请扫描下方二维码重新配对。");
+        } else {
+          b.disabled = false;
+          b.textContent = "重试";
+          micSay(false, (r && r.error) || "生成失败");
+        }
+      });
+      act.appendChild(b);
+    }
+
+    if (st.action === "setup_mic") {
+      const b = document.createElement("button");
+      b.textContent = "一键创建虚拟麦克风";
+      b.addEventListener("click", async () => {
+        b.disabled = true;
+        b.textContent = "正在创建…";
+        let r = null;
+        try { r = await (await fetch("/api/mic/setup", { method: "POST" })).json(); } catch (e) {}
+        if (r && r.ok) {
+          d.classList.add("done");
+          b.textContent = "已创建 ✓";
+          micRefresh();
+        } else {
+          b.disabled = false;
+          b.textContent = "重试";
+          micSay(false, (r && r.error) || "创建失败");
+        }
+      });
+      act.appendChild(b);
+    }
+
+    if (act.children.length) d.appendChild(act);
+    micSteps.appendChild(d);
+  }
+
+  $("#mic-recheck").addEventListener("click", micRefresh);
+  $("#mic-open").addEventListener("click", micOpenGuide);
+
+  // 手机端点了「在电脑上打开引导」→ 这里会带 ?mic=1 打开，直接展开引导
+  micRefresh();
+  if (new URLSearchParams(location.search).get("mic") === "1") {
+    micOpenGuide();
   }
 
   $("#enter").addEventListener("change", async (ev) => {
@@ -193,12 +373,12 @@
         out.className = "upd new";
         out.innerHTML =
           "有新版本 v" + esc(latest) + ' · <a href="' + REL_URL +
-          '" target="_blank" rel="noopener">去下载</a>';
+          '" target="_blank" rel="noopener">前往下载</a>';
       } else {
         out.textContent = "已是最新（v" + esc(cur) + "）";
       }
     } catch (e) {
-      out.textContent = "检查失败（可能没联网，或 GitHub 访问不了）";
+      out.textContent = "检查失败（无法访问网络或 GitHub）";
     } finally {
       clearTimeout(timer);
     }

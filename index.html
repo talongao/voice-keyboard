@@ -269,7 +269,7 @@
 
 <main id="panel-mic" class="hide">
   <div class="mic-head">
-    <div class="mic-title" id="mic-state">检查中…</div>
+    <div class="mic-title" id="mic-state">检测中…</div>
     <div class="mic-sub" id="mic-sub"></div>
   </div>
 
@@ -284,8 +284,8 @@
   <div class="mic-ask hide" id="mic-ask">
     <div class="mic-ask-txt" id="mic-ask-txt"></div>
     <div class="mic-ask-btns">
-      <button id="mic-guide-yes">好，引导我</button>
-      <button id="mic-guide-no" class="ghost">以后再说</button>
+      <button id="mic-guide-yes">在电脑上打开引导</button>
+      <button id="mic-guide-no" class="ghost">重新检测</button>
     </div>
   </div>
 
@@ -690,145 +690,116 @@
     micAsk.classList.add("hide");
     micSteps.classList.add("hide");
     micSteps.innerHTML = "";
-    micState.textContent = "检查中…";
+    micState.textContent = "检测中…";
     micSub.textContent = "";
     micNote.textContent = "";
 
     let st = null;
-    try { st = await api.get("/api/mic/status"); } catch (e) { /* 服务没起来 */ }
+    try { st = await api.get("/api/mic/status"); } catch (e) { /* 服务可能没起来 */ }
 
     const secure = window.isSecureContext;
-    let problem = "";
-    if (!secure) {
-      // 这条最常见：手机用 http://内网IP 打开，浏览器直接不给麦克风
-      problem = "当前页面是 http 打开的，浏览器只在 https 下才允许网页使用麦克风。";
-    } else if (!st) {
-      problem = "连不上电脑端的服务。";
-    } else if (!st.ok) {
-      problem = st.reason || "电脑上还没准备好虚拟麦克风。";
-    }
 
-    if (!problem) {
-      micSetReady(true);
-      micState.textContent = "准备就绪";
-      micSub.textContent = "设备：" + (st.device || "虚拟麦克风")
-        + (st.tls ? " · 已启用 HTTPS" : "");
-      micNote.textContent = "点上面的按钮开始。用的时候请让这个页面留在前台"
-        + "（手机息屏或切到别的 App，浏览器会暂停录音）。";
-      micBtnTxt.textContent = "开始";
+    // 情况一：页面还是 http。浏览器不给麦克风，而且这时候多半服务端也没证书。
+    if (!secure) {
+      if (st && st.tls) {
+        // 服务端已经有证书了：手机这边只要换成 https 重开一次
+        micState.textContent = "需要改用 HTTPS";
+        micSub.textContent = "电脑端已启用 HTTPS。请以 https 重新打开本页并重新配对，"
+          + "首次需手动信任一次证书（iOS：安装描述文件后在「关于本机 → 证书信任设置」启用；"
+          + "Android：安装用户 CA）。";
+        showHttpsButton();
+        return;
+      }
+      micState.textContent = "尚未就绪";
+      micSub.textContent = "需要通过 HTTPS 访问本页。浏览器仅在 https 下允许网页使用麦克风，"
+        + "这一步需要在电脑上完成设置。";
+      askOnPc("需要在电脑端生成并信任 HTTPS 证书。");
       return;
     }
 
-    micState.textContent = "还不能用";
-    micSub.textContent = problem;
-    micAsk.classList.remove("hide");
-    micAskTxt.textContent = "麦克风模式还需要准备一下：" + problem + " 要我一步步引导你吗？";
+    if (!st) {
+      micState.textContent = "连接异常";
+      micSub.textContent = "无法连接电脑端服务。";
+      return;
+    }
+
+    // 情况二：https 了，但电脑上缺虚拟声卡（Windows / macOS 常见）
+    if (!st.ok) {
+      micState.textContent = "尚未就绪";
+      micSub.textContent = st.reason || "电脑上还未准备好虚拟麦克风。";
+      askOnPc(st.reason || "需要在电脑上安装虚拟声卡。");
+      return;
+    }
+
+    // 情况三：齐活
+    micSetReady(true);
+    micState.textContent = "准备就绪";
+    micSub.textContent = "设备：" + (st.device || "虚拟麦克风")
+      + (st.tls ? " · 已启用 HTTPS" : "");
+    micNote.textContent = "点击上方按钮开始采集。采集期间请保持本页面在前台："
+      + "息屏或切换到其他应用时，浏览器会暂停录音。";
     micBtnTxt.textContent = "开始";
   }
 
-  $("#mic-guide-no").addEventListener("click", () => micAsk.classList.add("hide"));
+  // 需要电脑上动手：说明原因，并给"请电脑弹出引导"的按钮
+  function askOnPc(reason) {
+    micNote.textContent = "";
+    micAsk.classList.remove("hide");
+    micAskTxt.textContent = "麦克风模式需要在电脑上完成设置：" + reason
+      + " 点击下方按钮，电脑端会弹出引导页面（装驱动、生成证书都在电脑上做，手机上做不了）。";
+    micBtnTxt.textContent = "开始";
+  }
+
+  function showHttpsButton() {
+    micSteps.classList.remove("hide");
+    micSteps.innerHTML = "";
+    const box = document.createElement("div");
+    box.className = "step";
+    const t = document.createElement("div");
+    t.className = "st";
+    t.textContent = "以 HTTPS 重新打开";
+    const d = document.createElement("div");
+    d.className = "sd";
+    d.textContent = "会带上当前配对信息，重新打开后无需再输配对码。";
+    const act = document.createElement("div");
+    act.className = "sact";
+    const go = document.createElement("button");
+    go.textContent = "以 HTTPS 重新打开";
+    go.addEventListener("click", () => {
+      location.href = location.href.replace(/^http:/, "https:");
+    });
+    act.appendChild(go);
+    box.append(t, d, act);
+    micSteps.appendChild(box);
+  }
+
+  $("#mic-guide-no").addEventListener("click", micPrepare); // 「重新检测」
 
   $("#mic-guide-yes").addEventListener("click", async () => {
+    let r = null;
+    try { r = await api("/api/mic/guide-open", {}, "POST"); } catch (e) {}
     micAsk.classList.add("hide");
     micSteps.classList.remove("hide");
-    micSteps.innerHTML = '<div class="step"><div class="st">正在取引导…</div></div>';
-    let g = null;
-    try { g = await api.get("/api/mic/guide"); } catch (e) {}
-    if (!g || !g.steps) {
-      micSteps.innerHTML = '<div class="step"><div class="st">取不到引导</div>'
-        + '<div class="sd">可能是连接断了，刷新页面再试一次。</div></div>';
-      return;
-    }
     micSteps.innerHTML = "";
-    g.steps.forEach((st, i) => micRenderStep(st, i + 1));
+    const box = document.createElement("div");
+    box.className = "step";
+    const t = document.createElement("div");
+    t.className = "st";
+    t.textContent = r && r.ok ? "已请电脑打开引导" : "请电脑打开引导失败";
+    const d = document.createElement("div");
+    d.className = "sd";
+    d.textContent = r && r.ok
+      ? "请在电脑上按引导操作（安装驱动、生成证书）。完成后回到本页点「重新检测」。"
+      : "可以手动在电脑上打开控制台页，那里有完整的麦克风引导。";
+    box.append(t, d);
+    micSteps.appendChild(box);
     const re = document.createElement("button");
     re.textContent = "重新检测";
-    re.style.cssText = "height:42px;border-radius:11px;border:0;font:inherit;font-size:14px;"
+    re.style.cssText = "height:42px;border-radius:11px;font:inherit;font-size:14px;"
       + "background:#1b2029;color:#8ab4f8;border:1px solid #2a3140;cursor:pointer";
     re.addEventListener("click", micPrepare);
     micSteps.appendChild(re);
   });
-
-  function micRenderStep(st, n) {
-    const d = document.createElement("div");
-    d.className = "step";
-    const t = document.createElement("div");
-    t.className = "st";
-    t.textContent = n + ". " + (st.title || "");
-    const sd = document.createElement("div");
-    sd.className = "sd";
-    sd.textContent = st.detail || "";
-    d.append(t, sd);
-
-    if (st.command) {
-      const c = document.createElement("code");
-      c.textContent = st.command;
-      d.appendChild(c);
-    }
-    const act = document.createElement("div");
-    act.className = "sact";
-
-    if (st.url) {
-      const a = document.createElement("a");
-      a.href = st.url;
-      a.target = "_blank";
-      a.rel = "noopener";
-      a.textContent = "打开下载页";
-      act.appendChild(a);
-    }
-
-    if (st.action === "enable_tls") {
-      const b = document.createElement("button");
-      b.textContent = "开启 HTTPS（生成证书）";
-      b.addEventListener("click", async () => {
-        b.disabled = true;
-        b.textContent = "正在生成…";
-        let r = null;
-        try { r = await api("/api/tls/enable", {}, "POST"); } catch (e) {}
-        if (r && r.ok) {
-          d.classList.add("done");
-          micSub.textContent = "证书已生成。手机需要用 https 重新打开：" + (r.url || "");
-          const go = document.createElement("button");
-          go.textContent = "现在就用 https 打开";
-          go.addEventListener("click", () => {
-            // 保留配对密钥（在 location.hash 里），只换协议和端口
-            location.href = (r.url || "").replace(/\/$/, "") + location.hash;
-          });
-          act.innerHTML = "";
-          act.appendChild(go);
-        } else {
-          b.disabled = false;
-          b.textContent = "重试";
-          micSub.textContent = (r && r.error) || "生成失败";
-        }
-      });
-      act.appendChild(b);
-    }
-
-    if (st.action === "setup_mic") {
-      const b = document.createElement("button");
-      b.textContent = "一键创建虚拟麦克风";
-      b.addEventListener("click", async () => {
-        b.disabled = true;
-        b.textContent = "正在创建…";
-        let r = null;
-        try { r = await api("/api/mic/setup", {}, "POST"); } catch (e) {}
-        if (r && r.ok) {
-          d.classList.add("done");
-          micSub.textContent = r.message || "创建成功";
-          b.textContent = "已创建 ✓";
-        } else {
-          b.disabled = false;
-          b.textContent = "重试";
-          micSub.textContent = (r && r.error) || "创建失败";
-        }
-      });
-      act.appendChild(b);
-    }
-
-    if (act.children.length) d.appendChild(act);
-    micSteps.appendChild(d);
-  }
 
   // ── 采集与传输 ──
   async function micStart() {
@@ -852,7 +823,7 @@
       silent.connect(audioCtx.destination);
 
       const r = await api("/api/mic/start", {}, "POST");
-      if (!r || !r.ok) throw new Error((r && r.error) || "电脑端没准备好");
+      if (!r || !r.ok) throw new Error((r && r.error) || "电脑端尚未就绪");
       if (audioCtx.sampleRate !== 48000) {
         micNote.textContent = "注意：设备的采样率是 " + audioCtx.sampleRate
           + "Hz，音调可能略有偏差。";
@@ -862,9 +833,9 @@
       recording = true;
       micBtn.classList.add("on");
       micBtnTxt.textContent = "停止";
-      micState.textContent = "正在收音";
-      micNote.textContent = "声音正在传给电脑。请让本页面留在前台；"
-        + "在电脑的会议/游戏/直播软件里选择虚拟麦克风即可。";
+      micState.textContent = "正在采集";
+      micNote.textContent = "音频正在传输至电脑。请保持本页面在前台，"
+        + "并在电脑的会议、游戏或直播软件中选择该虚拟麦克风。";
     } catch (e) {
       micSub.textContent = "启动失败：" + (e && e.message ? e.message : e);
       await micTeardown(false);
@@ -929,8 +900,8 @@
   document.addEventListener("visibilitychange", () => {
     if (document.hidden && recording) {
       micTeardown(true);
-      micState.textContent = "页面切到后台，已暂停";
-      micNote.textContent = "回到本页面后，点「开始」继续。";
+      micState.textContent = "页面已切至后台，采集暂停";
+      micNote.textContent = "返回本页面后，点击「开始」继续。";
     }
   });
 

@@ -47,6 +47,8 @@ pub struct App {
     /// 托盘点一下、或者用户又双击了一次 exe（新进程发现已经有实例在跑，
     /// 就请求老进程开页面），都走这个位。
     pub show_request: std::sync::atomic::AtomicBool,
+    /// 手机端点了「在电脑上打开引导」：开控制台页时要带上引导
+    pub guide_request: std::sync::atomic::AtomicBool,
 
 }
 
@@ -87,12 +89,26 @@ impl App {
             inject: Mutex::new(()),
             attempts: Mutex::new(VecDeque::new()),
             show_request: std::sync::atomic::AtomicBool::new(false),
+            guide_request: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
     pub fn request_show(&self) {
         self.show_request
             .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// 手机端请求"在电脑上打开麦克风引导"
+    pub fn request_show_guide(&self) {
+        self.guide_request
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.request_show();
+    }
+
+    /// 这次要开的控制台页要不要带麦克风引导
+    pub fn take_guide_request(&self) -> bool {
+        self.guide_request
+            .swap(false, std::sync::atomic::Ordering::Relaxed)
     }
 
     /// 阻塞等到有人要开窗口（托盘「打开主窗口」、或又双击了一次 exe）。

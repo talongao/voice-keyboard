@@ -45,7 +45,10 @@ async function status() {
       "--autoplay-policy=no-user-gesture-required",
     ],
   });
-  const page = await browser.newPage();
+  // 手机页就用手机视口（PC 端控制台页另开一页，用桌面视口）
+  const page = await browser.newPage({
+    viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true,
+  });
   const errs = [];
   page.on("pageerror", (e) => errs.push(String(e)));
 
@@ -69,7 +72,7 @@ async function status() {
     await page.click("#mic-btn");
     await page.waitForTimeout(2500);
     const recState = (await page.textContent("#mic-state")).trim();
-    /正在收音/.test(recState) ? ok(`开始录音后状态正确：${recState}`) : bad(`状态不对：${recState}`);
+    /正在采集/.test(recState) ? ok(`开始录音后状态正确：${recState}`) : bad(`状态不对：${recState}`);
 
     // 电平表应当有反应（假麦克风也有信号）
     const width = await page.evaluate(() => document.querySelector("#meter-bar").style.width);
@@ -87,30 +90,38 @@ async function status() {
       ? ok(`服务端真的收到了 ${m[1]} 块 PCM（整条音频链路通了）`)
       : bad(`服务端没收到音频块：${sub}`);
   } else {
-    // ── 不可用：走引导链路 ──
-    ok("探测判定不可用，出现了引导弹窗");
+    // ── 不可用：手机上应当"请求电脑端弹引导"，而不是在手机上看装驱动步骤 ──
+    ok("探测判定不可用，出现了提示");
     const ask = (await page.textContent("#mic-ask-txt")).trim();
-    ask.length > 10 ? ok(`弹窗说清了原因：${ask.slice(0, 60)}…`) : bad(`弹窗没说明原因：${ask}`);
+    /在电脑上/.test(ask) ? ok(`提示指向电脑端：${ask.slice(0, 40)}…`) : bad(`提示没说清在电脑上做：${ask}`);
+    /装驱动、生成证书都在电脑上做/.test(ask) || /电脑上完成设置/.test(ask)
+      ? ok("说明了这些活只能在电脑上做") : bad("没说明为什么要在电脑上做");
 
-    await page.click("#mic-guide-yes");
-    await page.waitForTimeout(1500);
-    const steps = await page.locator("#mic-steps .step").count();
-    steps >= 2 ? ok(`引导渲染出 ${steps} 步`) : bad(`引导步骤太少：${steps}`);
-    const hasRecheck = await page.locator("#mic-steps button", { hasText: "重新检测" }).count();
-    hasRecheck > 0 ? ok("引导末尾给了「重新检测」") : bad("引导里没有重新检测");
-
-    // 点了「以后再说」应当收起弹窗
-    await page.reload({ waitUntil: "networkidle" });
+    // 点「在电脑上打开引导」→ 应当请求服务端打开电脑端引导页
+    const [req] = await Promise.all([
+      page.waitForRequest((r) => r.url().includes("/api/mic/guide-open"), { timeout: 5000 }).catch(() => null),
+      page.click("#mic-guide-yes"),
+    ]);
+    req ? ok("点了之后确实请求了电脑端打开引导") : bad("没有发出 guide-open 请求");
     await page.waitForTimeout(1000);
-    await page.click("#tab-mic");
-    await page.waitForTimeout(1200);
-    if (await page.locator("#mic-ask").isVisible()) {
-      await page.click("#mic-guide-no");
-      await page.waitForTimeout(400);
-      (await page.locator("#mic-ask").isVisible())
-        ? bad("点了「以后再说」弹窗没收起")
-        : ok("「以后再说」能收起弹窗");
-    }
+    const after = (await page.textContent("#mic-steps")).trim();
+    /电脑/.test(after) ? ok(`手机上给了后续指引：${after.slice(0, 30)}…`) : bad(`后续指引不对：${after}`);
+
+    // 电脑端控制台页带着 ?mic=1 打开时，必须能渲染出引导步骤
+    // 电脑端控制台页：**桌面视口**，别拿手机窄屏测 PC 页面
+    const pc = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const pcErrs = [];
+    pc.on("pageerror", (e) => pcErrs.push(String(e)));
+    await pc.goto(`${BASE}/console?mic=1`, { waitUntil: "networkidle" });
+    await pc.waitForTimeout(2000);
+    const steps = await pc.locator("#mic-steps .mstep").count();
+    steps >= 2 ? ok(`电脑端控制台渲染出 ${steps} 步引导`) : bad(`电脑端引导没渲染：${steps} 步`);
+    const why = (await pc.textContent("#mic-why")).trim();
+    why.length > 4 ? ok(`电脑端显示了状态与原因：${why.slice(0, 44)}…`) : bad(`电脑端没显示原因：${why}`);
+    const recheck = await pc.locator("#mic-recheck").count();
+    recheck === 1 ? ok("电脑端有「重新检测」") : bad("电脑端没有重新检测按钮");
+    pcErrs.length === 0 ? ok("电脑端无 JS 报错") : bad("电脑端有 JS 报错", pcErrs);
+    await pc.close();
   }
 
   errs.length === 0 ? ok("没有 JS 报错") : bad("页面有 JS 报错", errs);

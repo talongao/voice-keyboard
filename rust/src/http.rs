@@ -227,6 +227,36 @@ fn route(
         return json(200, serde_json::json!({ "ok": true, "bye": true }));
     }
 
+    // ---------- 麦克风模式 ----------
+    // 这组接口是本机控制台页（免 token）和手机端（带 token）都要用的，
+    // 所以判定是「本机放行，否则要 token」。
+    let mic_ok = is_local || app.check_token(token);
+    if path.starts_with("/api/mic") || path.starts_with("/api/tls") {
+        if !mic_ok {
+            return json(401, serde_json::json!({ "error": "未授权" }));
+        }
+    }
+
+    // 手机端点「在电脑上打开引导」→ 让电脑端控制台页带着引导弹出来
+    if *method == Method::Post && path == "/api/mic/guide-open" {
+        app.request_show_guide();
+        return json(200, serde_json::json!({ "ok": true }));
+    }
+
+    // 控制台页要展示"换成 https 之后手机扫的二维码"，由服务端生成（避免前端塞个二维码库）
+    if is_get && path == "/api/qr.svg" {
+        let proto = if crate::listener::tls_on() { "https" } else { "http" };
+        let url = net::endpoints(app.port)
+            .first()
+            .map(|e| {
+                let e = e.replacen("http://", &format!("{proto}://"), 1);
+                net::pair_url(&e, Some(&app.pair_key), app.pin.as_deref())
+            })
+            .unwrap_or_default();
+        let svg = net::svg(&url, 6).unwrap_or_default();
+        return reply(200, svg.into_bytes(), "image/svg+xml; charset=utf-8");
+    }
+
     // ---------- 需要 token ----------
     if !app.check_token(token) {
         return json(401, serde_json::json!({ "error": "未授权" }));
@@ -250,7 +280,6 @@ fn route(
         return api_key(app, data);
     }
 
-    // ---------- 麦克风模式 ----------
     // 音频是裸 body（16-bit 单声道 PCM），单独处理，不走 JSON
     if *method == Method::Post && path == "/api/mic/start" {
         let dryrun = app.mode == "dryrun";
@@ -261,7 +290,7 @@ fn route(
     }
     if *method == Method::Post && path == "/api/mic/audio" {
         if raw.is_empty() {
-            return json(400, serde_json::json!({ "error": "空的音频块" }));
+            return json(400, serde_json::json!({ "error": "音频数据为空" }));
         }
         return match crate::audio::push(raw) {
             Ok(()) => json(200, serde_json::json!({ "ok": true })),
@@ -303,7 +332,7 @@ fn route(
     // 一键创建虚拟麦克风（只有 Linux 能自动）
     if *method == Method::Post && path == "/api/mic/setup" {
         if app.mode == "dryrun" {
-            return json(200, serde_json::json!({ "ok": true, "message": "dryrun：假装创建好了" }));
+            return json(200, serde_json::json!({ "ok": true, "message": "dryrun：已模拟创建" }));
         }
         return match crate::mic::setup() {
             Ok(msg) => json(200, serde_json::json!({ "ok": true, "message": msg })),

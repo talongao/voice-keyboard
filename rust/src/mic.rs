@@ -64,7 +64,7 @@ mod imp {
             ok: false,
             platform: "Linux",
             device: None,
-            reason: "没找到 PulseAudio / PipeWire（pactl 连不上）。".into(),
+            reason: "未检测到 PulseAudio 或 PipeWire（pactl 无法连接）。".into(),
         }
     }
 
@@ -123,14 +123,14 @@ mod imp {
                 ok: false,
                 platform: "Windows",
                 device: None,
-                reason: "没找到虚拟声卡（VB-CABLE / Voicemeeter）。Windows 没有内置的虚拟麦克风。".into(),
+                reason: "未检测到虚拟声卡（VB-CABLE / Voicemeeter）。Windows 不自带虚拟麦克风。".into(),
             },
         }
     }
 
     /// Windows 必须装第三方驱动，程序不能替用户装
     pub fn setup() -> Result<String, String> {
-        Err("Windows 需要你自己装一次虚拟声卡，跟着页面上的步骤走就行。".into())
+        Err("Windows 需手动安装一次虚拟声卡，请按页面提示操作。".into())
     }
 }
 
@@ -161,12 +161,12 @@ mod imp {
             ok: false,
             platform: "macOS",
             device: None,
-            reason: "没找到 BlackHole（macOS 上的虚拟音频驱动）。".into(),
+            reason: "未检测到 BlackHole（macOS 的虚拟音频驱动）。".into(),
         }
     }
 
     pub fn setup() -> Result<String, String> {
-        Err("macOS 需要先安装 BlackHole，装完要重启一次。".into())
+        Err("macOS 需先安装 BlackHole，安装后重启一次。".into())
     }
 }
 
@@ -201,15 +201,15 @@ pub fn guide(tls_on: bool) -> Value {
     if !tls_on {
         steps.push(json!({
             "title": "开启 HTTPS（生成自签证书）",
-            "detail": "浏览器只在 https 下才允许网页使用麦克风，这一步是必须的。点下面的按钮即可，程序会自己生成证书，不用你操作命令。",
+            "detail": "浏览器仅在 https 下允许网页使用麦克风，此步骤必需。点击下方按钮即可，程序会自动生成证书，无需手工执行命令。",
             "action": "enable_tls"
         }));
         steps.push(json!({
             "title": "手机信任这张证书",
             "detail": if cfg!(windows) || cfg!(target_os = "macos") {
-                "切换后手机会提示「不安全」，需要手动信任：iOS 到「设置 → 通用 → VPN与设备管理」安装描述文件，再到「关于本机 → 证书信任设置」打开开关；Android 在「设置 → 安全 → 加密与凭据」里安装。只点「继续访问」不够，浏览器照样不给麦克风。"
+                "切换后手机会提示「不安全」，需手动信任：iOS 前往「设置 → 通用 → VPN与设备管理」安装描述文件，再到「关于本机 → 证书信任设置」启用；Android 在「设置 → 安全 → 加密与凭据」中安装。仅点击「继续访问」不足以启用麦克风。"
             } else {
-                "切换后手机提示「不安全」时按提示信任即可。"
+                "切换后手机提示「不安全」时，按提示完成信任即可。"
             }
         }));
     }
@@ -217,26 +217,26 @@ pub fn guide(tls_on: bool) -> Value {
     // ② 驱动
     let driver: Vec<Value> = if cfg!(windows) {
         vec![
-            json!({"title": "下载 VB-CABLE", "detail": "VB-Audio 官方的虚拟声卡，免费版够用（装完可能要重启）。",
+            json!({"title": "下载 VB-CABLE", "detail": "VB-Audio 官方虚拟声卡，免费版即可满足需求（安装后可能需要重启）。",
                    "url": "https://vb-audio.com/Cable/"}),
             json!({"title": "解压并以管理员身份运行 VBCABLE_Setup_x64.exe", "detail": "右键 → 以管理员身份运行，然后点 Install Driver。"}),
-            json!({"title": "重启电脑", "detail": "驱动要重启后才生效。", "need_restart": true}),
-            json!({"title": "回来点「重新检测」", "detail": "检测到 CABLE Input 就能开麦克风模式了。"}),
+            json!({"title": "重启电脑", "detail": "驱动需重启后生效。", "need_restart": true}),
+            json!({"title": "返回本页并点击「重新检测」", "detail": "检测到 CABLE 设备后即可开启麦克风模式。"}),
         ]
     } else if cfg!(target_os = "macos") {
         vec![
-            json!({"title": "安装 BlackHole", "detail": "macOS 上的虚拟音频驱动，2ch 版本即可。",
+            json!({"title": "安装 BlackHole", "detail": "macOS 的虚拟音频驱动，2ch 版本即可。",
                    "command": "brew install blackhole-2ch --cask"}),
-            json!({"title": "（没装 Homebrew 的话）手动下载安装", "detail": "下载安装包，双击安装，按提示输入密码。",
+            json!({"title": "未安装 Homebrew 时手动下载安装", "detail": "下载安装包，双击安装，按提示输入密码。",
                    "url": "https://existential.audio/blackhole/download/"}),
             json!({"title": "重启 Mac", "detail": "音频驱动必须重启后才会被系统加载。", "need_restart": true}),
-            json!({"title": "回来点「重新检测」", "detail": "检测到 BlackHole 就能开麦克风模式了。"}),
+            json!({"title": "返回本页并点击「重新检测」", "detail": "检测到 BlackHole 后即可开启麦克风模式。"}),
         ]
     } else {
         vec![
-            json!({"title": "安装 PipeWire 的 PulseAudio 兼容层", "detail": "大多数发行版已经自带；没有的话装一下。",
-                   "command": "sudo apt install pipewire-pulse   # Debian/Ubuntu；Fedora/Arch 通常自带"}),
-            json!({"title": "点「一键创建」", "detail": "Linux 上不需要装任何驱动——程序会自己建一个叫「语音键盘麦克风」的虚拟麦克风。",
+            json!({"title": "安装 PipeWire 的 PulseAudio 兼容层", "detail": "多数发行版已自带；Debian/Ubuntu 可用下方命令安装，Fedora/Arch 通常自带。",
+                   "command": "sudo apt install pipewire-pulse"}),
+            json!({"title": "执行一键创建", "detail": "Linux 无需安装任何驱动：程序会自动创建名为「语音键盘麦克风」的虚拟麦克风。",
                    "action": "setup_mic"}),
         ]
     };
