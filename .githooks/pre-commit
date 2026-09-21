@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# 不许在 master 上直接提交——所有开发都在 develop 上做（见 AGENTS.md）
+set -euo pipefail
+branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+case "$branch" in
+  master|main)
+    cat >&2 <<'MSG'
+✗ 别在 master 上提交。
+
+  这个仓库的约定是：**开发都在 develop 上做**，master 只通过 PR 进来。
+      git switch develop        # 切过去，再提交
+      # 或者： git switch -c fix/xxx && git commit ...
+
+  规则写在 AGENTS.md 里。
+MSG
+    exit 1
+    ;;
+esac
+exit 0

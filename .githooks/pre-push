@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# 不许直接推 master——master 只能通过 GitHub PR 合并更新（见 AGENTS.md）
+set -uo pipefail
+remote="$1"
+blocked=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/heads/master|refs/heads/main)
+      # 允许「推送一个本地已经等于远端的内容」（同步用），其它一律拦
+      if [ "$local_sha" = "$remote_sha" ]; then continue; fi
+      echo "✗ 别直接推 $remote_ref 到 $remote（$remote）" >&2
+      blocked=1
+      ;;
+  esac
+done
+if [ "$blocked" = 1 ]; then
+  cat >&2 <<'MSG'
+
+  master 只能通过 PR 合并更新。正常流程：
+      git push origin develop                          # 推开发分支
+      gh pr create --base master --head develop --fill
+      gh pr checks --watch                             # 等 CI 绿
+      gh pr merge --rebase                             # 合并（master 要线性历史）
+  合并完把本地对齐（rebase 合并会重写 sha，别用 ff 合并）：
+      git fetch origin && git reset --hard origin/master && git push --force-with-lease origin develop
+MSG
+  exit 1
+fi
+exit 0
