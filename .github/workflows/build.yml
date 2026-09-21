@@ -1,0 +1,168 @@
+name: build
+
+# 三平台产物 + 顺手跑一遍接口层测试。
+#
+# 触发：
+#   * push 到 master         → 构建 + 测试（合并后的最终验证）
+#   * 指向 master 的 PR      → 同样的构建 + 测试（**这是合并前必须绿的那一道**，
+#                              因为 master 现在只能通过 PR 更新）
+#   * push tag（v0.1.14 这种）→ 额外发一个 Release，附件是三平台产物
+#   * 手动 workflow_dispatch  → 想临时跑一次也行
+#
+# 公开仓库的 Actions 分钟数不计费，所以 PR 上也跑不心疼。
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Windows：单文件 exe（GUI 子系统，双击不弹黑框）────────────────
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+      - name: build
+        run: cargo build --release --manifest-path rust/Cargo.toml
+      - name: collect
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp rust/target/release/voice-keyboard.exe dist/
+          ls -la dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/voice-keyboard.exe
+
+  # ── macOS：M 系列 + Intel 都编，lipo 合成一个通用二进制 ─────────────
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: build (both arches)
+        run: |
+          cargo build --release --manifest-path rust/Cargo.toml --target aarch64-apple-darwin
+          cargo build --release --manifest-path rust/Cargo.toml --target x86_64-apple-darwin
+      - name: lipo 合成通用二进制
+        run: |
+          mkdir -p dist
+          lipo -create -output dist/voice-keyboard \
+            rust/target/aarch64-apple-darwin/release/voice-keyboard \
+            rust/target/x86_64-apple-darwin/release/voice-keyboard
+          lipo -info dist/voice-keyboard
+      - name: 组 .app 包 + 打包
+        run: |
+          set -e
+          VER=$(grep '^version' rust/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          # 裸二进制（终端里跑）——没有托盘，界面在浏览器，附 tar.gz 保留可执行位
+          tar -czf dist/voice-keyboard-macos.tar.gz -C dist voice-keyboard
+          # .app 包：macOS 的菜单栏图标（NSStatusItem）**必须在 app 包里才稳**，
+          # 裸二进制碰 AppKit 会直接 abort（CGSConnectionByID 断言）。
+          # LSUIElement=true → 菜单栏有图标、Dock 里不出现。
+          APP="dist/语音键盘.app"
+          rm -rf "$APP"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp dist/voice-keyboard "$APP/Contents/MacOS/voice-keyboard"
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>语音键盘</string>
+            <key>CFBundleDisplayName</key><string>语音键盘</string>
+            <key>CFBundleIdentifier</key><string>xyz.bazhuayu.voice-keyboard</string>
+            <key>CFBundleExecutable</key><string>voice-keyboard</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>${VER}</string>
+            <key>CFBundleVersion</key><string>${VER}</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>LSUIElement</key><true/>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+          # ad-hoc 签名：本机跑够用（省得 Gatekeeper 直接拦）
+          codesign --force --deep --sign - "$APP" 2>/dev/null || true
+          ditto -c -k --keepParent "$APP" dist/voice-keyboard-macos-app.zip
+          ls -la dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            dist/voice-keyboard-macos.tar.gz
+            dist/voice-keyboard-macos-app.zip
+
+  # ── Linux：单文件二进制（enigo 用纯 Rust 的 x11rb，不用装任何系统库）──
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: build
+        run: cargo build --release --manifest-path rust/Cargo.toml
+      - name: collect
+        run: |
+          mkdir -p dist && cp rust/target/release/voice-keyboard dist/
+          ls -la dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/voice-keyboard
+
+  # ── 接口层端到端测试（HTTP → 鉴权 → 注入层 → 应用真收到字）─────────
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: 装测试用的系统依赖
+        run: sudo apt-get update && sudo apt-get install -y xvfb xdotool xterm
+      - name: build
+        run: cargo build --release --manifest-path rust/Cargo.toml
+      - name: e2e（Xvfb + 真注入 + 比对文件）
+        run: ./tests/e2e_xvfb.sh
+      # 失败时把临时文件也存成 artifact——GitHub 的日志接口要 token 才能读，
+      # 存成文件至少能下载下来看。
+      - name: 失败时把现场存下来
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure
+          path: |
+            /tmp/vk-*
+          if-no-files-found: ignore
+
+  # ── 打 tag 时发 Release ──────────────────────────────────────────
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [windows, macos, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: 列一下要发的东西
+        run: ls -la dist/
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

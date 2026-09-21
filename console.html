@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>语音键盘 · 控制台</title>
+<style>
+  :root{
+    --bg:#0f1115; --surface:#171b23; --surface2:#1e2330; --border:#242a36;
+    --text:#e8eaf0; --muted:#8b94a7; --accent:#4c8dff; --ok:#3ddc84; --err:#ff5f56;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;min-height:100vh;background:var(--bg);color:var(--text);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    display:flex;align-items:center;justify-content:center;padding:32px 20px;
+  }
+  .wrap{width:100%;max-width:820px}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:22px}
+  h1{font-size:18px;margin:0;font-weight:650;letter-spacing:.2px}
+  .pill{
+    margin-left:auto;font-size:12.5px;padding:5px 12px;border-radius:20px;
+    background:var(--surface);border:1px solid var(--border);color:var(--muted);
+  }
+  .pill.on{color:var(--ok);border-color:#204a35;background:#12211b}
+  .pill.off{color:var(--err);border-color:#4a2024;background:#211316}
+
+  /* 按钮 */
+  .row-btns{display:flex;gap:8px;margin-top:14px}
+  .row-btns button{
+    flex:1 1 0;height:38px;border-radius:10px;cursor:pointer;font:inherit;font-size:13.5px;
+    background:var(--surface2);color:var(--text);border:1px solid var(--border);
+    transition:.15s;
+  }
+  .row-btns button:hover{border-color:#31405c}
+  .row-btns button.danger{color:#ffb3ae;border-color:#4a2024;background:#211316}
+  .row-btns button.danger:hover{border-color:#5c2a2f}
+
+  main{
+    display:grid;grid-template-columns:300px 1fr;gap:20px;align-items:start;
+  }
+  @media(max-width:700px){ main{grid-template-columns:1fr} }
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:20px}
+
+  .qbox{background:#fff;border-radius:12px;padding:14px;line-height:0;min-height:150px;
+    display:flex;align-items:center;justify-content:center}
+  .qbox svg{width:100%;height:auto;display:block}
+  .qbox .none{color:#999;font-size:13px;line-height:1.5;text-align:center;font-family:inherit}
+  .qr p{margin:14px 0 8px;color:var(--muted);font-size:13px;text-align:center}
+  .qr code{
+    display:block;background:var(--surface2);border:1px solid var(--border);
+    padding:9px 12px;border-radius:10px;font-size:12.5px;color:#8ab4f8;
+    text-align:center;word-break:break-all;
+  }
+
+  dl{margin:0 0 4px;display:grid;grid-template-columns:auto 1fr;gap:9px 16px;font-size:14px}
+  dt{color:var(--muted)}
+  dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
+  dd.eps{text-align:right;font-size:12.5px;color:#8ab4f8;word-break:break-all}
+
+  .sw{display:flex;align-items:center;gap:10px;margin:18px 0 4px;
+      padding-top:16px;border-top:1px solid var(--border);cursor:pointer;user-select:none;font-size:14px}
+  .sw input{appearance:none;width:38px;height:22px;border-radius:11px;background:#333b4a;
+    position:relative;cursor:pointer;transition:.16s;flex:0 0 auto;margin:0}
+  .sw input::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;
+    border-radius:50%;background:#8b94a7;transition:.16s}
+  .sw input:checked{background:var(--accent)}
+  .sw input:checked::after{left:19px;background:#fff}
+
+  h3{font-size:13px;color:var(--muted);font-weight:600;margin:20px 0 10px;
+     text-transform:uppercase;letter-spacing:.6px}
+  ul{list-style:none;margin:0;padding:0;font-size:13.5px;max-height:230px;overflow-y:auto}
+  li{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid #1e2330}
+  li:last-child{border-bottom:0}
+  li .t{color:var(--muted);font-size:12px;flex:0 0 auto;font-variant-numeric:tabular-nums}
+  li .x{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  li .n{color:var(--muted);font-size:12px;flex:0 0 auto}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>语音键盘 · 电脑端</h1>
+    <span class="pill" id="state">连接中…</span>
+  </header>
+
+  <main>
+    <section class="card qr">
+      <div class="qbox">{{QR_SVG}}</div>
+      <p>手机扫码即可使用</p>
+      <code>{{PAIR_URL}}</code>
+    </section>
+
+    <section class="card">
+      <dl>
+        <dt>配对 PIN</dt><dd id="pin">—</dd>
+        <dt>注入模式</dt><dd id="mode">—</dd>
+        <dt>已配对设备</dt><dd id="clients">—</dd>
+        <dt>访问地址</dt><dd class="eps" id="eps">—</dd>
+      </dl>
+
+      <label class="sw"><input type="checkbox" id="enter"> 发送后自动回车（手机端发完自动敲回车）</label>
+      <div class="row-btns">
+        <button id="copy">复制配对链接</button>
+        <button id="stop" class="danger">停止服务</button>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const $ = (s) => document.querySelector(s);
+
+
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  }
+
+  async function poll() {
+    try {
+      const r = await fetch("/api/status");
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const j = await r.json();
+
+      $("#state").className = "pill on";
+      $("#state").textContent = "运行中";
+      $("#mode").textContent = j.mode;
+      $("#pin").textContent = j.pin || "已关闭";
+      $("#clients").textContent = j.clients + " 台";
+      $("#eps").innerHTML = (j.endpoints || []).map(esc).join("<br>") || "—";
+      $("#enter").checked = !!j.allow_enter;
+    } catch (e) {
+      $("#state").className = "pill off";
+      $("#state").textContent = "已停止";
+    }
+  }
+
+  $("#enter").addEventListener("change", async (ev) => {
+    try {
+      await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allow_enter: ev.target.checked }),
+      });
+    } catch (e) { /* 下次轮询会纠正 */ }
+    poll();
+  });
+
+  // 复制配对链接 / 停止服务——都在本机页面上，直接打本机接口
+  $("#copy").addEventListener("click", async () => {
+    const url = "{{PAIR_URL}}";
+    try {
+      await navigator.clipboard.writeText(url);
+      $("#copy").textContent = "已复制 ✓";
+      setTimeout(() => ($("#copy").textContent = "复制配对链接"), 1500);
+    } catch (e) {
+      $("#copy").textContent = "复制失败，手动选上面那行";
+    }
+  });
+  $("#stop").addEventListener("click", async () => {
+    $("#stop").textContent = "正在停止…";
+    try { await fetch("/api/shutdown", { method: "POST" }); } catch (e) {}
+    setTimeout(poll, 500);
+  });
+
+  poll();
+  setInterval(poll, 2000);
+})();
+</script>
+</body>
+</html>
