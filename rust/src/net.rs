@@ -29,8 +29,9 @@ pub fn local_ips() -> Vec<String> {
 }
 
 pub fn endpoints(port: u16) -> Vec<String> {
+    let scheme = crate::listener::scheme();
     match detect_lan_ip() {
-        Some(ip) => vec![format!("http://{ip}:{port}")],
+        Some(ip) => vec![format!("{scheme}://{ip}:{port}")],
         None => Vec::new(),
     }
 }

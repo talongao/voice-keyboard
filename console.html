@@ -145,6 +145,9 @@
           <button id="mic-recheck">重新检测</button>
           <button id="mic-open">查看引导</button>
         </div>
+        <div class="mic-btns hide" id="mic-tls-row">
+          <button id="mic-http">恢复为 HTTP（删除证书）</button>
+        </div>
         <div class="mic-qr hide" id="mic-qr">
           <p>手机请改用下面的地址扫描（HTTPS）：</p>
           <img id="mic-qr-img" alt="HTTPS 配对二维码">
@@ -185,6 +188,7 @@
       $("#eps").innerHTML = (j.endpoints || []).map(esc).join("<br>") || "—";
       $("#ver").textContent = j.version ? "v" + j.version : "—";
       $("#enter").checked = !!j.allow_enter;
+      if (j.__err) { throw new Error(j.__err); }
     } catch (e) {
       $("#state").className = "pill off";
       $("#state").textContent = "已停止";
@@ -196,16 +200,63 @@
   const micDot = $("#mic-dot"), micWhy = $("#mic-why");
   const micSteps = $("#mic-steps"), micQr = $("#mic-qr"), micQrImg = $("#mic-qr-img");
 
+  // 本机接口的统一调用：失败时不要只说"请刷新重试"，而是把真实原因摆出来。
+  // 最常见的原因是**旧标签页**：程序重启后端口或协议变了，旧页面里的相对请求
+  // 打到了不存在的地址，于是什么都取不到。
+  async function localJson(path, init) {
+    try {
+      const r = await fetch(path, init);
+      const txt = await r.text();
+      if (!r.ok) {
+        return { __err: `HTTP ${r.status} ${r.statusText}（${path}）` + (txt ? "：" + txt.slice(0, 120) : "") };
+      }
+      try {
+        return JSON.parse(txt);
+      } catch (e) {
+        return { __err: `返回的不是 JSON（${path}）` };
+      }
+    } catch (e) {
+      return { __err: `连不上本机服务（${path}）：${e && e.message ? e.message : e}。`
+        + "程序可能已重启，端口或协议变了——请关掉本页，从托盘重新打开控制台。" };
+    }
+  }
+
+  function showReload(title, detail) {
+    micSteps.classList.remove("hide");
+    micSteps.innerHTML = "";
+    const d = document.createElement("div");
+    d.className = "mstep";
+    const t = document.createElement("div");
+    t.className = "st";
+    t.textContent = title;
+    const sd = document.createElement("div");
+    sd.className = "sd";
+    sd.textContent = detail;
+    d.append(t, sd);
+    const act = document.createElement("div");
+    act.className = "sact";
+    const b = document.createElement("button");
+    b.textContent = "重新加载本页";
+    b.addEventListener("click", () => location.reload());
+    act.appendChild(b);
+    d.appendChild(act);
+    micSteps.appendChild(d);
+  }
+
   function micSay(ok, text) {
     micDot.className = "mic-dot " + (ok === true ? "ok" : ok === false ? "bad" : "");
     micWhy.textContent = text;
   }
 
   async function micRefresh() {
-    let st = null;
-    try { st = await (await fetch("/api/mic/status")).json(); } catch (e) {}
-    if (!st) { micSay(false, "取不到状态（服务可能已停止）"); return; }
+    const st = await localJson("/api/mic/status");
+    if (st.__err) {
+      micSay(false, "无法读取麦克风状态");
+      showReload("无法连接本机服务", st.__err);
+      return;
+    }
 
+    $("#mic-tls-row").classList.toggle("hide", !st.tls);
     if (st.ok && st.tls) {
       micSay(true, "已就绪 —— 设备：" + (st.device || "虚拟麦克风")
         + "。手机端切到「麦克风」标签即可开始。");
@@ -213,6 +264,7 @@
       micSteps.classList.add("hide");
       return;
     }
+    $("#mic-tls-row").classList.toggle("hide", !st.tls);
     if (st.ok && !st.tls) {
       micSay(null, "虚拟设备已就绪，但还没有 HTTPS 证书 —— 浏览器只在 https 下才允许网页使用麦克风。"
         + "点「查看引导」按第 1 步生成证书。");
@@ -225,11 +277,13 @@
   async function micOpenGuide() {
     micSteps.classList.remove("hide");
     micSteps.innerHTML = '<div class="mstep"><div class="st">正在获取引导…</div></div>';
-    let g = null;
-    try { g = await (await fetch("/api/mic/guide")).json(); } catch (e) {}
-    if (!g || !g.steps) {
-      micSteps.innerHTML = '<div class="mstep"><div class="st">无法获取引导</div>'
-        + '<div class="sd">请刷新页面后重试。</div></div>';
+    const g = await localJson("/api/mic/guide");
+    if (g.__err) {
+      showReload("无法获取引导", g.__err);
+      return;
+    }
+    if (!g.steps || !g.steps.length) {
+      showReload("引导内容为空", "服务端没有返回引导步骤，请把日志发给开发者。");
       return;
     }
     micSteps.innerHTML = "";
@@ -271,8 +325,7 @@
       b.addEventListener("click", async () => {
         b.disabled = true;
         b.textContent = "正在生成…";
-        let r = null;
-        try { r = await (await fetch("/api/tls/enable", { method: "POST" })).json(); } catch (e) {}
+        const r = await localJson("/api/tls/enable", { method: "POST" });
         if (r && r.ok) {
           d.classList.add("done");
           b.textContent = "已切换 ✓";
@@ -297,8 +350,7 @@
       b.addEventListener("click", async () => {
         b.disabled = true;
         b.textContent = "正在创建…";
-        let r = null;
-        try { r = await (await fetch("/api/mic/setup", { method: "POST" })).json(); } catch (e) {}
+        const r = await localJson("/api/mic/setup", { method: "POST" });
         if (r && r.ok) {
           d.classList.add("done");
           b.textContent = "已创建 ✓";
@@ -315,6 +367,17 @@
     if (act.children.length) d.appendChild(act);
     micSteps.appendChild(d);
   }
+
+  // 启用 HTTPS 之后给一条"退回去"的路：删掉证书、服务切回 HTTP。
+  // 自签证书在手机上要手动信任，嫌麻烦就可以退回来（代价是麦克风模式用不了）。
+  async function micRevertHttp() {
+    const r = await localJson("/api/tls/disable", { method: "POST" });
+    if (r.__err) { showReload("恢复 HTTP 失败", r.__err); return; }
+    const port = location.port || "8765";
+    showReload("已切回 HTTP", "证书已删除，服务已改用 HTTP。请用下面这个地址重新打开控制台："
+      + `http://127.0.0.1:${port}/console（本页是 https，已失效）`);
+  }
+  $("#mic-http").addEventListener("click", micRevertHttp);
 
   $("#mic-recheck").addEventListener("click", micRefresh);
   $("#mic-open").addEventListener("click", micOpenGuide);

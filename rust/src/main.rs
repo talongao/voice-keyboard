@@ -715,11 +715,28 @@ fn open_console_with(endpoints: &[String], port: u16, guide: bool) {
     }
 }
 
+/// Windows 上给子进程加上"不要窗口"标志。
+///
+/// 不加的话，`cmd /C start`、`powershell` 这类调用会闪出一个终端黑框
+/// （用户看到的就是"点一下麦克风，PC 端冒个黑框"，很莫名其妙）。
+#[allow(unused_variables)]
+pub(crate) fn no_window(cmd: &mut std::process::Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
 fn open_url(url: &str) -> bool {
     #[cfg(windows)]
-    let r = std::process::Command::new("cmd")
-        .args(["/C", "start", "", url])
-        .spawn();
+    let r = {
+        let mut c = std::process::Command::new("cmd");
+        c.args(["/C", "start", "", url]);
+        no_window(&mut c);
+        c.spawn()
+    };
     #[cfg(target_os = "macos")]
     let r = std::process::Command::new("open").arg(url).spawn();
     #[cfg(all(unix, not(target_os = "macos")))]

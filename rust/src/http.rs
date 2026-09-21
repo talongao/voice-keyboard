@@ -258,7 +258,10 @@ fn route(
     }
 
     // ---------- 需要 token ----------
-    if !app.check_token(token) {
+    // 例外：控制台页（本机）要读麦克风/证书状态，而它没有 token。
+    // 之前这里少考虑了这一条，导致开着 PIN 鉴权时控制台页取不到引导（实测踩到）。
+    let local_console_ok = is_local && (path.starts_with("/api/mic") || path.starts_with("/api/tls"));
+    if !local_console_ok && !app.check_token(token) {
         return json(401, serde_json::json!({ "error": "未授权" }));
     }
 

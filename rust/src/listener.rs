@@ -30,6 +30,16 @@ pub fn tls_on() -> bool {
     TLS_ON.load(Ordering::Relaxed) == 1
 }
 
+/// 当前协议（拼配对链接、二维码、控制台地址时都要用它，
+/// 否则 https 模式下会给出 http 地址——手机根本连不上）
+pub fn scheme() -> &'static str {
+    if tls_on() {
+        "https"
+    } else {
+        "http"
+    }
+}
+
 /// 请求换协议。真正的切换由监督循环在 200ms 内完成，
 /// 这样 HTTP 响应能先发出去（手机先拿到"好了"，再跳 https）。
 pub fn request_tls(on: bool) {

@@ -95,10 +95,11 @@ mod imp {
     /// 用 PowerShell 列一下声音设备，找常见的虚拟声卡名
     fn find_virtual() -> Option<String> {
         let ps = "Get-CimInstance Win32_SoundDevice | Select-Object -ExpandProperty Name";
-        let out = Command::new("powershell")
-            .args(["-NoProfile", "-Command", ps])
-            .output()
-            .ok()?;
+        let mut c = Command::new("powershell");
+        c.args(["-NoProfile", "-Command", ps]);
+        // 不给它加"无窗口"标志的话，每次探测都会闪一个黑框
+        crate::no_window(&mut c);
+        let out = c.output().ok()?;
         let text = String::from_utf8_lossy(&out.stdout);
         for line in text.lines() {
             let l = line.trim();

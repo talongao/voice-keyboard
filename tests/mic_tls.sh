@@ -56,6 +56,29 @@ else
 fi
 [ "$(echo "$S" | field "['tls']")" = "False" ] && ok "初始状态是 HTTP" || bad "初始不该是 HTTPS"
 
+head_ "[1.5/5] 开着 PIN 鉴权时，本机控制台页仍要能读（不带 token）"
+# 这一条是踩坑补的：控制台页没有 token，但它必须能读麦克风状态与引导。
+# 之前测试全用 --no-auth 跑，所以没发现「带鉴权就 401」的问题。
+pkill -x voice-keyboard 2>/dev/null
+sleep 1
+DISPLAY="$DISP" "$BIN" --headless --no-tray --no-browser --port "$PORT" --quiet >"$LOG.auth" 2>&1 &
+SRV_PID=$!
+sleep 2
+CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://127.0.0.1:$PORT/api/mic/status")
+[ "$CODE" = "200" ] && ok "带鉴权时本机免 token 可读 /api/mic/status（200）" \
+  || bad "带鉴权时本机读不到 /api/mic/status（$CODE）——控制台页会显示「无法获取引导」"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://127.0.0.1:$PORT/api/mic/guide")
+[ "$CODE" = "200" ] && ok "带鉴权时本机免 token 可读 /api/mic/guide（200）" || bad "带鉴权时读不到引导（$CODE）"
+# 但手机该要 token 的接口一个都不能松
+CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -X POST -d '{"text":"x"}' "http://127.0.0.1:$PORT/api/send")
+[ "$CODE" = "200" ] && ok "本机调用注入接口仍然放行（和以前一致）" || true
+# 换回免鉴权模式继续后面的用例
+curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$PORT/api/shutdown"
+sleep 1
+DISPLAY="$DISP" "$BIN" --headless --no-tray --no-browser --port "$PORT" --no-auth --quiet >"$LOG" 2>&1 &
+SRV_PID=$!
+sleep 2
+
 head_ "[2/5] 分步引导 /api/mic/guide"
 G=$(curl -s --max-time 5 "http://127.0.0.1:$PORT/api/mic/guide")
 N=$(echo "$G" | field "['steps'].__len__()")
