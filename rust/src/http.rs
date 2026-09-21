@@ -16,8 +16,6 @@ use crate::state::{now_secs, App, LogEntry};
 // 前端直接复用 Python 版的两个页面，单一来源。
 const INDEX_HTML: &str = include_str!("../../index.html");
 const CONSOLE_HTML: &str = include_str!("../../console.html");
-/// 手机端采集用的 AudioWorklet（浏览器加载它时不会带我们的 token，所以放行）
-const MIC_WORKLET: &str = include_str!("../../mic-worklet.js");
 
 pub const APP_TAG: &str = "voice-keyboard";
 
@@ -50,19 +48,7 @@ pub fn bind_addr(bind: &str) -> Result<Server, String> {
     Server::http(bind).map_err(|e| format!("监听 {bind} 失败：{e}"))
 }
 
-/// 同上，但用自签证书起 HTTPS（麦克风模式）
-pub fn bind_https(bind: &str, t: &crate::tls::Tls) -> Result<Server, String> {
-    Server::https(
-        bind,
-        tiny_http::SslConfig {
-            certificate: t.cert_pem.clone(),
-            private_key: t.key_pem.clone(),
-        },
-    )
-    .map_err(|e| format!("监听 {bind}(HTTPS) 失败：{e}"))
-}
-
-pub fn serve_on(app: Arc<App>, server: &Server) -> Result<(), String> {
+pub fn serve_on(app: Arc<App>, server: Server) -> Result<(), String> {
     for req in server.incoming_requests() {
         let app = app.clone();
         // 每个请求一个线程。请求量很小，不值得上线程池。
@@ -120,13 +106,6 @@ fn route(
     // ---------- 静态页面 ----------
     if is_get && (path == "/" || path == "/index.html") {
         return html(INDEX_HTML.to_string());
-    }
-    if is_get && path == "/mic-worklet.js" {
-        return reply(
-            200,
-            MIC_WORKLET.as_bytes().to_vec(),
-            "application/javascript; charset=utf-8",
-        );
     }
     if is_get && path == "/favicon.ico" {
         return reply(200, Vec::new(), "image/x-icon");
@@ -248,105 +227,6 @@ fn route(
     }
     if *method == Method::Post && path == "/api/key" {
         return api_key(app, data);
-    }
-
-    // ---------- 麦克风模式 ----------
-    // 音频是裸 body（16-bit 单声道 PCM），单独处理，不走 JSON
-    if *method == Method::Post && path == "/api/mic/start" {
-        let dryrun = app.mode == "dryrun";
-        return match crate::audio::start(dryrun) {
-            Ok(msg) => json(200, serde_json::json!({ "ok": true, "message": msg })),
-            Err(e) => json(200, serde_json::json!({ "ok": false, "error": e })),
-        };
-    }
-    if *method == Method::Post && path == "/api/mic/audio" {
-        if raw.is_empty() {
-            return json(400, serde_json::json!({ "error": "空的音频块" }));
-        }
-        return match crate::audio::push(raw) {
-            Ok(()) => json(200, serde_json::json!({ "ok": true })),
-            Err(e) => json(200, serde_json::json!({ "ok": false, "error": e })),
-        };
-    }
-    if *method == Method::Post && path == "/api/mic/stop" {
-        return match crate::audio::stop() {
-            Ok(stat) => json(200, serde_json::json!({ "ok": true, "stat": stat })),
-            Err(e) => json(200, serde_json::json!({ "ok": false, "error": e })),
-        };
-    }
-    // 需要 token：手机端切换 Tab 时调。
-    if *method == Method::Get && path == "/api/mic/status" {
-        // dryrun 是"假装一切正常，只统计不输出"，音频同理：方便测试和排障
-        if app.mode == "dryrun" {
-            return json(200, serde_json::json!({
-                "ok": true, "platform": crate::mic::platform_name(),
-                "device": "dryrun 虚拟麦克风", "reason": "",
-                "tls": crate::listener::tls_on(),
-                "streaming": crate::audio::is_running(),
-            }));
-        }
-        let p = crate::mic::probe();
-        return json(200, serde_json::json!({
-            "ok": p.ok,
-            "platform": p.platform,
-            "device": p.device,
-            "reason": p.reason,
-            "tls": crate::listener::tls_on(),
-            "streaming": crate::audio::is_running(),
-        }));
-    }
-
-    if *method == Method::Get && path == "/api/mic/guide" {
-        return json(200, crate::mic::guide(crate::listener::tls_on()));
-    }
-
-    // 一键创建虚拟麦克风（只有 Linux 能自动）
-    if *method == Method::Post && path == "/api/mic/setup" {
-        if app.mode == "dryrun" {
-            return json(200, serde_json::json!({ "ok": true, "message": "dryrun：假装创建好了" }));
-        }
-        return match crate::mic::setup() {
-            Ok(msg) => json(200, serde_json::json!({ "ok": true, "message": msg })),
-            Err(e) => json(200, serde_json::json!({ "ok": false, "error": e })),
-        };
-    }
-
-    if *method == Method::Get && path == "/api/tls" {
-        return json(200, serde_json::json!({
-            "enabled": crate::listener::tls_on(),
-            "cert": crate::tls::cert_exists(),
-        }));
-    }
-
-    // 生成自签证书并当场把协议换成 HTTPS（同一个端口、同一个令牌，不用重新配对）
-    if *method == Method::Post && path == "/api/tls/enable" {
-        let ips = net::local_ips();
-        return match crate::tls::generate(&crate::tls::base(), &ips) {
-            Ok(_) => {
-                crate::listener::request_tls(true);
-                let url = net::endpoints(app.port)
-                    .first()
-                    .map(|e| e.replacen("http://", "https://", 1))
-                    .unwrap_or_default();
-                app.note("tls", "已生成自签证书，切到 HTTPS".to_string());
-                json(200, serde_json::json!({
-                    "ok": true, "switching": true, "url": url,
-                    "hint": "手机需要用 https 重新打开；首次要信任一次证书"
-                }))
-            }
-            Err(e) => json(200, serde_json::json!({ "ok": false, "error": e })),
-        };
-    }
-
-    // 删掉证书、退回 HTTP
-    if *method == Method::Post && path == "/api/tls/disable" {
-        return match crate::tls::remove(&crate::tls::base()) {
-            Ok(()) => {
-                crate::listener::request_tls(false);
-                json(200, serde_json::json!({ "ok": true, "switching": true }))
-            }
-            Err(e) => json(200, serde_json::json!({ "ok": false, "error": e })),
-        };
     }
 
     json(404, serde_json::json!({ "error": "no such api" }))
