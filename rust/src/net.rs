@@ -19,6 +19,15 @@ pub fn detect_lan_ip() -> Option<String> {
 /// 候选地址。目前只有局域网一个。
 ///
 /// 留成 Vec 是因为手机端会「依次尝试」，将来多地址源不用改协议。
+/// 本机的局域网地址列表（自签证书的 SAN 要用它，否则手机按 IP 访问会报名字不匹配）
+pub fn local_ips() -> Vec<String> {
+    let mut v: Vec<String> = Vec::new();
+    if let Some(ip) = detect_lan_ip() {
+        v.push(ip);
+    }
+    v
+}
+
 pub fn endpoints(port: u16) -> Vec<String> {
     match detect_lan_ip() {
         Some(ip) => vec![format!("http://{ip}:{port}")],

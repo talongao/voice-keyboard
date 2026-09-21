@@ -28,7 +28,7 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["NSAppl
 libc = "0.2"
 
 [dependencies]
-tiny_http = "0.12"
+tiny_http = { version = "0.12", features = ["ssl-rustls"] }
 enigo = "0.6"
 # 只要二维码矩阵，不要它自带的 PNG 渲染（那会把 image 拖进来）
 qrcode = { version = "0.14", default-features = false }
@@ -37,6 +37,8 @@ arboard = { version = "3", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rand = "0.8"
+# 自签证书：麦克风模式必须要 HTTPS（浏览器只在安全上下文给麦克风）
+rcgen = "0.13"
 
 [[bin]]
 name = "voice-keyboard"
