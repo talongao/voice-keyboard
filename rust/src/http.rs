@@ -164,6 +164,7 @@ fn route(
         return json(
             200,
             serde_json::json!({
+                "version": env!("CARGO_PKG_VERSION"),
                 "mode": app.mode,
                 "endpoints": eps,
                 "pin": app.pin,
