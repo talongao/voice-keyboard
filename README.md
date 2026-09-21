@@ -260,10 +260,9 @@ VK_PW=/path/to/node_modules/playwright ./tests/browser/run.sh
 - 程序需要注入权限（Windows 无需额外授权、macOS 需辅助功能权限、Linux 依赖 X11）
 - 建议仅在可信局域网内使用，不要将服务端口暴露到公网
 
-## 致谢
+## 社区
 
-- 感谢 [**LINUX DO**](https://linux.do/) 社区的支持与认可。使用问题、功能建议与经验交流，
-  也欢迎在社区中提出。
+感谢 [LINUX DO](https://linux.do/) 社区。
 
 ## 许可证
 
