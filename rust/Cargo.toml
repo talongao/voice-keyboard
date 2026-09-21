@@ -1,6 +1,6 @@
 [package]
 name = "voice-keyboard"
-version = "0.1.15"
+version = "0.1.16"
 edition = "2021"
 description = "手机当远程键盘：文字直接插进电脑光标"
 license = "MIT"
@@ -51,3 +51,7 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# 音频输出只 Windows/macOS 需要（Linux 用 pacat 管子，不引依赖）
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+cpal = "0.15"

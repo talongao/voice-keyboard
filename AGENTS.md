@@ -130,6 +130,14 @@ VK_PW=/path/to/node_modules/playwright ./tests/browser/run.sh   # 手机端：�
   自签的 SAN 必须写进本机所有 IP（见 `net::local_ips`），否则手机按 IP 访问会报名字不匹配。
 - **切换是进程内的**：`listener::run` 用 `Arc<Server>` + `unblock()` 原地换协议，
   **不重启进程、不换端口、不掉令牌**（重启会让手机重新配对，体验很差）。
+- **音频怎么传**：手机 Web Audio 采集 → 每 100ms 一块 16-bit 单声道 PCM(48k) → `POST /api/mic/audio`（裸 body）。
+  刻意**不用 WebSocket**：省一个依赖（tiny_http 够用），而且 iOS Safari 不支持流式请求体、
+  "反复 POST 小块"它反而没问题。裸 PCM 在局域网约 768 kbps，不需要 Opus/ffmpeg。
+- **输出后端**：Linux 用 `pacat` 管子（零依赖）；Windows/macOS 才引入 `cpal`
+  （做成 `[target.'cfg(any(windows, target_os = "macos"))'.dependencies]`，Linux 构建不受影响）。
+  cpal 的 Stream 在部分平台不是 Send，必须在它自己的线程里建、也在那里 drop。
+- **`--mode dryrun` 也管音频**：探测直接报"可用"、音频只统计字节数不输出，
+  这样没有声卡的环境（CI）也能端到端测采集与传输。
 - **虚拟声卡**：Linux 用 PipeWire/Pulse 的 null-sink（程序自己建，零安装）；
   Windows 要 VB-CABLE 一类；macOS 要 BlackHole 且装完重启。探测与引导在 `mic.rs`。
 
@@ -146,5 +154,9 @@ VK_PW=/path/to/node_modules/playwright ./tests/browser/run.sh   # 手机端：�
    不授权的话图标**不出现且不报错**（注入也会被静默挡掉）。
 4. **macOS 托盘只能在 `.app` 包里**：裸二进制从终端跑碰 AppKit 会 abort
    （`CGSConnectionByID` 断言，拦不住）。程序自己判断：不在 `.app` 里就跳过托盘。
-5. **Windows 的托盘/菜单靠主线程消息循环派发**：主线程去 `sleep` 轮询的话，
+5. **`index.html` / `console.html` 是编译期内联的**（`include_str!`）：改完 HTML **必须重新
+   `cargo build`**，否则测的是二进制里那份旧页面（踩过：改了页面没重编，测试一直对着旧版跑）。
+6. **页面里原来只有 `.gate.hide` / `.stick-row.hide` 这种"元素级"隐藏**：新加的面板/弹窗
+   只写 `class="hide"` 是不生效的，得有一条通用的 `.hide{display:none !important}`。
+7. **Windows 的托盘/菜单靠主线程消息循环派发**：主线程去 `sleep` 轮询的话，
    连右键菜单都弹不出来（托盘"点了没反应"的根因）。
