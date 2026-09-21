@@ -118,6 +118,21 @@ VK_PW=/path/to/node_modules/playwright ./tests/browser/run.sh   # 手机端：�
 # （VK_PW 不设也行，脚本会在 ./node_modules、~/node_modules、全局 npm root 里找）
 ```
 
+## 麦克风模式（第二条线）
+
+文字线（现状）和音频线**并存**：手机端一个 Tab 切。
+
+- **协议策略**：没证书 → 全部 HTTP（现状不变）；**一旦生成过自签证书 → 全部走 HTTPS**。
+  证书存在 `status.json` 那个目录下的 `tls/`；`--http` 可强制回 HTTP。
+- **为什么非要 HTTPS**：浏览器只在安全上下文（https / localhost）下给麦克风。
+  `http://192.168.x.x` 属于不安全，`getUserMedia` 直接被拒 —— 这是浏览器规矩，绕不过。
+- **为什么要自签而不是真证书**：局域网 IP 没有域名，CA 不可能签发。
+  自签的 SAN 必须写进本机所有 IP（见 `net::local_ips`），否则手机按 IP 访问会报名字不匹配。
+- **切换是进程内的**：`listener::run` 用 `Arc<Server>` + `unblock()` 原地换协议，
+  **不重启进程、不换端口、不掉令牌**（重启会让手机重新配对，体验很差）。
+- **虚拟声卡**：Linux 用 PipeWire/Pulse 的 null-sink（程序自己建，零安装）；
+  Windows 要 VB-CABLE 一类；macOS 要 BlackHole 且装完重启。探测与引导在 `mic.rs`。
+
 ## 踩过的坑（别再踩）
 
 1. **Linux/X11 偶发丢字**：X11 没"直接输入任意 Unicode 字符"的接口，注入得临时改键码，

@@ -48,7 +48,19 @@ pub fn bind_addr(bind: &str) -> Result<Server, String> {
     Server::http(bind).map_err(|e| format!("监听 {bind} 失败：{e}"))
 }
 
-pub fn serve_on(app: Arc<App>, server: Server) -> Result<(), String> {
+/// 同上，但用自签证书起 HTTPS（麦克风模式）
+pub fn bind_https(bind: &str, t: &crate::tls::Tls) -> Result<Server, String> {
+    Server::https(
+        bind,
+        tiny_http::SslConfig {
+            certificate: t.cert_pem.clone(),
+            private_key: t.key_pem.clone(),
+        },
+    )
+    .map_err(|e| format!("监听 {bind}(HTTPS) 失败：{e}"))
+}
+
+pub fn serve_on(app: Arc<App>, server: &Server) -> Result<(), String> {
     for req in server.incoming_requests() {
         let app = app.clone();
         // 每个请求一个线程。请求量很小，不值得上线程池。
@@ -223,6 +235,69 @@ fn route(
     }
     if *method == Method::Post && path == "/api/key" {
         return api_key(app, data);
+    }
+
+    // ---------- 麦克风模式 ----------
+    // 需要 token：手机端切换 Tab 时调。
+    if *method == Method::Get && path == "/api/mic/status" {
+        let p = crate::mic::probe();
+        return json(200, serde_json::json!({
+            "ok": p.ok,
+            "platform": p.platform,
+            "device": p.device,
+            "reason": p.reason,
+            "tls": crate::listener::tls_on(),
+        }));
+    }
+
+    if *method == Method::Get && path == "/api/mic/guide" {
+        return json(200, crate::mic::guide(crate::listener::tls_on()));
+    }
+
+    // 一键创建虚拟麦克风（只有 Linux 能自动）
+    if *method == Method::Post && path == "/api/mic/setup" {
+        return match crate::mic::setup() {
+            Ok(msg) => json(200, serde_json::json!({ "ok": true, "message": msg })),
+            Err(e) => json(200, serde_json::json!({ "ok": false, "error": e })),
+        };
+    }
+
+    if *method == Method::Get && path == "/api/tls" {
+        return json(200, serde_json::json!({
+            "enabled": crate::listener::tls_on(),
+            "cert": crate::tls::cert_exists(),
+        }));
+    }
+
+    // 生成自签证书并当场把协议换成 HTTPS（同一个端口、同一个令牌，不用重新配对）
+    if *method == Method::Post && path == "/api/tls/enable" {
+        let ips = net::local_ips();
+        return match crate::tls::generate(&crate::tls::base(), &ips) {
+            Ok(_) => {
+                crate::listener::request_tls(true);
+                let url = net::endpoints(app.port)
+                    .first()
+                    .map(|e| e.replacen("http://", "https://", 1))
+                    .unwrap_or_default();
+                app.note("tls", "已生成自签证书，切到 HTTPS".to_string());
+                json(200, serde_json::json!({
+                    "ok": true, "switching": true, "url": url,
+                    "hint": "手机需要用 https 重新打开；首次要信任一次证书"
+                }))
+            }
+            Err(e) => json(200, serde_json::json!({ "ok": false, "error": e })),
+        };
+    }
+
+    // 删掉证书、退回 HTTP
+    if *method == Method::Post && path == "/api/tls/disable" {
+        return match crate::tls::remove(&crate::tls::base()) {
+            Ok(()) => {
+                crate::listener::request_tls(false);
+                json(200, serde_json::json!({ "ok": true, "switching": true }))
+            }
+            Err(e) => json(200, serde_json::json!({ "ok": false, "error": e })),
+        };
     }
 
     json(404, serde_json::json!({ "error": "no such api" }))

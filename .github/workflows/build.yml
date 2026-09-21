@@ -137,6 +137,8 @@ jobs:
         run: cargo build --release --manifest-path rust/Cargo.toml
       - name: e2e（Xvfb + 真注入 + 比对文件）
         run: ./tests/e2e_xvfb.sh
+      - name: 麦克风模式（驱动探测 / 引导 / 自签证书 / HTTP↔HTTPS 切换）
+        run: ./tests/mic_tls.sh
       # 失败时把临时文件也存成 artifact——GitHub 的日志接口要 token 才能读，
       # 存成文件至少能下载下来看。
       - name: 失败时把现场存下来
